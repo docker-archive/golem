@@ -29,7 +29,7 @@ if [ "$1" == "-d" ]; then
 	shift
 fi
 
-TESTS=${@:-.}
+TESTS=${@:-registry}
 
 # Make sure we upgrade the integration environment.
 docker pull $INTEGRATION_IMAGE

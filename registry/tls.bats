@@ -10,7 +10,9 @@ password="passpassword"
 email="distribution@docker.com"
 
 function setup() {
-	docker pull $image
+	if [ "$TEST_SKIP_PULL" == "" ]; then
+		docker pull $image
+	fi
 }
 
 # skip basic auth tests with Docker 1.6, where they don't pass due to
