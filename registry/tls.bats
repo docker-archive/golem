@@ -1,12 +1,14 @@
 # Registry host name, should be set to non-localhost address and match
 # DNS name in nginx/ssl certificates and what is installed in /etc/docker/cert.d
-hostname="localregistry"
+hostname=${TEST_REGISTRY:-"localregistry"}
 
-image="hello-world:latest"
+repo=${TEST_REPO:-"hello-world"}
+tag=${TEST_TAG:-"latest"}
+image="${repo}:${tag}"
 
 # Login information, should match values in nginx/test.passwd
-user="testuser"
-password="passpassword"
+user=${TEST_USER:-"testuser"}
+password=${TEST_PASSWORD:-"passpassword"}
 email="distribution@docker.com"
 
 function setup() {
