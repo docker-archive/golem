@@ -21,6 +21,9 @@ export TEST_TAG="latest"
 export TEST_USER="testuser"
 export TEST_PASSWORD="passpassword"
 export TEST_REGISTRY="localregistry"
+
+# Pull images used for tests
+docker pull "${TEST_REPO}:${TEST_TAG}"
 export TEST_SKIP_PULL="true"
 
 # Run the tests.
