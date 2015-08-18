@@ -19,3 +19,19 @@ function start_daemon() {
 		sleep 1
 	done
 }
+
+#load_image build or pulls an image
+function load_image() {
+	docker_command="$1"
+	image_name="$2"
+	remote_image="$3"
+	build_dir="$4"
+	build_flags="$5"
+	if [ "$image_name" == "" ]; then
+		$docker_command build $build_flags -t "$remote_image" "$build_dir"
+	else
+		$docker_command pull "$image_name"
+		$docker_command tag -f "$image_name" "$remote_image"
+	fi
+
+}

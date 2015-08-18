@@ -7,7 +7,6 @@ TEST_ROOT=$(pwd -P)
 
 source helpers.bash
 
-
 volumeMount=""
 if [ "$DOCKER_VOLUME" != "" ]; then
 	volumeMount="-v ${DOCKER_VOLUME}:/var/lib/docker"
@@ -18,6 +17,20 @@ if [ "$DOCKER_BINARY" != "" ]; then
 	dockerMount="-v ${DOCKER_BINARY}:/usr/local/bin/docker"
 else
 	DOCKER_BINARY=docker
+fi
+
+DISTRIBUTION_IMAGE=${DISTRIBUTION_IMAGE:-registry:2.0.1}
+distributionMount=""
+if [ "$DISTRIBUTION_BUILD_DIR" != "" ]; then
+	distributionMount="-v ${DISTRIBUTION_BUILD_DIR}:/build/distribution"
+	DISTRIBUTION_IMAGE=""
+fi
+
+NOTARY_IMAGE=${NOTARY_IMAGE:-distribution/notary_notaryserver:0.1.4}
+notaryMount=""
+if [ "$NOTARY_BUILD_DIR" != "" ]; then
+	notaryMount="-v ${NOTARY_BUILD_DIR}:/build/notary"
+	NOTARY_IMAGE=""
 fi
 
 logMount=""
@@ -41,6 +54,7 @@ TESTS=${@:-registry notary}
 
 # Start a Docker engine inside a docker container
 ID=$(docker run -d -it --privileged $volumeMount $dockerMount $logMount \
+	$distributionMount $notaryMount \
 	-v ${TEST_ROOT}:/runner \
 	-w /runner \
 	-e "DOCKER_GRAPHDRIVER=$DOCKER_GRAPHDRIVER" \
@@ -67,13 +81,19 @@ done
 if [ "$DOCKER_VOLUME" == "" ]; then
 	# Make sure we have images outside the container, to transfer to the container.
 	# Not much will happen here if the images are already present.
-	docker-compose pull
-	docker-compose build
+	docker build -t runner_nginx ./nginx
+	docker pull registry:0.9.1
+
+	load_image docker "$DISTRIBUTION_IMAGE" golem/distribution:latest "$DISTRIBUTION_BUILD_DIR"
+	load_image docker "$NOTARY_IMAGE" golem/notary:latest "$NOTARY_BUILD_DIR" "-f $NOTARY_BUILD_DIR/notary-server-Dockerfile"
 
 	# Transfer images to the inner container.
-	for image in "$INTEGRATION_IMAGE" registry:0.9.1 registry:2.0.1 dockerintegration_nginx dockerintegration_registryv2; do
+	for image in registry:0.9.1 golem/distribution:latest golem/notary:latest runner_nginx; do
 		docker save "$image" | docker exec -i "$ID" docker load
 	done
+else
+	load_image "docker exec -i $ID docker" "$DISTRIBUTION_IMAGE" golem/distribution:latest /build/distribution
+	load_image "docker exec -i $ID docker" "$NOTARY_IMAGE" golem/notary:latest /build/notary "-f /build/notary/notary-server-Dockerfile"
 fi
 
 # Run the tests.
