@@ -1,0 +1,16 @@
+{
+	"server": {
+		"addr": ":4443",
+		"tls_key_file": "/certs/localregistry.key",
+		"tls_cert_file": "/certs/localregistry.cert"
+	},
+	"trust_service": {
+	  "type": "local",
+	  "hostname": "",
+	  "port": "",
+	  "key_algorithm": "ed25519"
+	},
+	"logging": {
+		"level": "debug"
+	}
+}

@@ -17,6 +17,7 @@ nginx:
   links:
     - registryv1:registryv1
     - registryv2:registryv2
+    - notaryserverhttp:notaryserverhttp
 registryv1:
   image: registry:0.9.1
   ports:
@@ -25,3 +26,19 @@ registryv2:
   image: registry:2.0.1
   ports:
     - "5000"
+notaryserver:
+  image: distribution/notary_notaryserver:0.1.4
+  ports:
+   - "8080"
+   - "4443:4443"
+  volumes:
+   - notary-server/notary-config.json:/go/src/github.com/docker/notary/cmd/notary-server/config.json:ro
+   - notary-server/certs:/certs:ro
+notaryserverhttp:
+  image: distribution/notary_notaryserver:0.1.4
+  ports:
+   - "8080"
+   - "4443"
+  volumes:
+   - notary-server/notary-http-config.json:/go/src/github.com/docker/notary/cmd/notary-server/config.json:ro
+   - notary-server/certs:/certs:ro

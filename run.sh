@@ -37,7 +37,7 @@ if [ "$1" == "-d" ]; then
 	shift
 fi
 
-TESTS=${@:-registry}
+TESTS=${@:-registry notary}
 
 # Start a Docker engine inside a docker container
 ID=$(docker run -d -it --privileged $volumeMount $dockerMount $logMount \
