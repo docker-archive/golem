@@ -11,5 +11,5 @@ echo "$IP localregistry" >> /etc/hosts
 
 sh install_certs.sh localregistry
 
-docker --daemon --log-level=panic \
-	--storage-driver="$DOCKER_GRAPHDRIVER" --exec-driver="$EXEC_DRIVER"
+docker --daemon --log-level=debug \
+	--storage-driver="$DOCKER_GRAPHDRIVER" --exec-driver="$EXEC_DRIVER" 2> /var/log/docker.log

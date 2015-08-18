@@ -11,6 +11,9 @@ function execute() {
 execute time docker-compose build
 
 execute docker-compose up -d
+trap "docker-compose stop &> /dev/null" EXIT
+
+execute docker-compose logs > /var/log/compose.log &
 
 # Run the tests.
 execute time bats -p $@

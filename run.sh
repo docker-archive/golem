@@ -20,6 +20,11 @@ else
 	DOCKER_BINARY=docker
 fi
 
+logMount=""
+if [ "$TEST_LOG_DIR" != "" ]; then
+	logMount="-v ${TEST_LOG_DIR}:/var/log"
+fi
+
 # Image containing the integration tests environment.
 INTEGRATION_IMAGE=${INTEGRATION_IMAGE:-distribution/docker-integration}
 
@@ -34,7 +39,7 @@ TESTS=${@:-registry}
 docker pull $INTEGRATION_IMAGE
 
 # Start a Docker engine inside a docker container
-ID=$(docker run -d -it --privileged $volumeMount $dockerMount \
+ID=$(docker run -d -it --privileged $volumeMount $dockerMount $logMount \
 	-v ${TEST_ROOT}:/runner \
 	-w /runner \
 	-e "DOCKER_GRAPHDRIVER=$DOCKER_GRAPHDRIVER" \
