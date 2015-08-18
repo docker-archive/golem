@@ -26,7 +26,11 @@ if [ "$TEST_LOG_DIR" != "" ]; then
 fi
 
 # Image containing the integration tests environment.
-INTEGRATION_IMAGE=${INTEGRATION_IMAGE:-distribution/docker-integration}
+image="$INTEGRATION_IMAGE"
+if [ "$image" == "" ]; then
+	image="distribution/docker-integration:latest"
+	docker pull $image
+fi
 
 if [ "$1" == "-d" ]; then
 	start_daemon
@@ -35,16 +39,13 @@ fi
 
 TESTS=${@:-registry}
 
-# Make sure we upgrade the integration environment.
-docker pull $INTEGRATION_IMAGE
-
 # Start a Docker engine inside a docker container
 ID=$(docker run -d -it --privileged $volumeMount $dockerMount $logMount \
 	-v ${TEST_ROOT}:/runner \
 	-w /runner \
 	-e "DOCKER_GRAPHDRIVER=$DOCKER_GRAPHDRIVER" \
 	-e "EXEC_DRIVER=$EXEC_DRIVER" \
-	${INTEGRATION_IMAGE} \
+	${image} \
 	./run_engine.sh)
 
 # Stop container on exit
