@@ -22,6 +22,6 @@ registryv1:
   ports:
     - "5000"
 registryv2:
-  build: "../../"
+  image: registry:2.0.1
   ports:
     - "5000"
