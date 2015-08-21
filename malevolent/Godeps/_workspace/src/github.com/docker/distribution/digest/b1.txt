@@ -1,0 +1,11 @@
+PASS
+BenchmarkAdd10	   30000	     43642 ns/op
+BenchmarkAdd100	    3000	    430000 ns/op
+BenchmarkAdd1000	     300	   4576972 ns/op
+BenchmarkLookup10	 1000000	      1264 ns/op
+BenchmarkLookup100	 1000000	      1346 ns/op
+BenchmarkLookup1000	 1000000	      1422 ns/op
+BenchmarkDump10	  500000	      2871 ns/op
+BenchmarkDump100	   50000	     26581 ns/op
+BenchmarkDump1000	    5000	    254223 ns/op
+ok  	github.com/docker/distribution/digest	13.392s

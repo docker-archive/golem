@@ -37,5 +37,6 @@ cp ./notary-server/certs/ca.pem /root/.docker/tls/${hostname}:4443/ca.crt
 cp ./notary-server/certs/${hostname}.key /root/.docker/tls/${hostname}:4443/${hostname}.key
 cp ./notary-server/certs/${hostname}.cert /root/.docker/tls/${hostname}:4443/${hostname}.cert
 
-
-
+# Malevolent server
+mkdir -p /etc/docker/certs.d/$hostname:6666
+cp ./malevolent/certs/ca.pem /etc/docker/certs.d/$hostname:6666/ca.crt
