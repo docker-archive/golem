@@ -35,3 +35,44 @@ function load_image() {
 	fi
 
 }
+
+# has_digest enforces the last output line is "Digest: sha256:..."
+# the input is the output from a docker push cli command
+function has_digest() {
+	filtered=$(echo "$1" |sed -rn '/[dD]igest\: sha(256|384|512)/ p')
+	[ "$filtered" != "" ]
+	digest=$(expr "$filtered" : ".*\(sha\(256\|384\|512\):[a-z0-9]*\)")
+}
+
+# tempImage creates a new image using the provided name
+# requires bats
+function tempImage() {
+	dir=$(mktemp -d)
+	run dd if=/dev/random of="$dir/f" bs=1024 count=0 seek=16
+	cat <<DockerFileContent > "$dir/Dockerfile"
+FROM scratch
+COPY f /f
+
+CMD []
+DockerFileContent
+	docker build --no-cache -t $1 $dir
+}
+
+# skip basic auth tests with Docker 1.6, where they don't pass due to
+# certificate issues, requires bats
+function basic_auth_version_check() {
+	run sh -c 'docker version | fgrep -q "Client version: 1.6."'
+	if [ "$status" -eq 0 ]; then
+		skip "Basic auth tests don't support 1.6.x"
+	fi
+}
+
+# login issues a login to docker to the provided server
+# uses user, password, and email variables set outside of function
+# requies bats
+function login() {
+	run docker login -u $user -p $password -e $email $1
+	[ "$status" -eq 0 ]
+	# First line is WARNING about credential save
+	[ "${lines[1]}" = "Login Succeeded" ]
+}

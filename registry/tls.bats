@@ -1,5 +1,10 @@
+#!/usr/bin/env bats
+
 # Registry host name, should be set to non-localhost address and match
 # DNS name in nginx/ssl certificates and what is installed in /etc/docker/cert.d
+
+load ../helpers
+
 hostname=${TEST_REGISTRY:-"localregistry"}
 
 repo=${TEST_REPO:-"hello-world"}
@@ -15,29 +20,6 @@ function setup() {
 	if [ "$TEST_SKIP_PULL" == "" ]; then
 		docker pull $image
 	fi
-}
-
-# skip basic auth tests with Docker 1.6, where they don't pass due to
-# certificate issues
-function basic_auth_version_check() {
-	run sh -c 'docker version | fgrep -q "Client version: 1.6."'
-	if [ "$status" -eq 0 ]; then
-		skip "Basic auth tests don't support 1.6.x"
-	fi
-}
-
-# has_digest enforces the last output line is "Digest: sha256:..."
-# the input is the name of the array containing the output lines
-function has_digest() {
-	filtered=$(echo "$1" |sed -rn '/[dD]igest\: sha(256|384|512)/ p')
-	[ "$filtered" != "" ]
-}
-
-function login() {
-	run docker login -u $user -p $password -e $email $1
-	[ "$status" -eq 0 ]
-	# First line is WARNING about credential save
-	[ "${lines[1]}" = "Login Succeeded" ]
 }
 
 @test "Test valid certificates" {
