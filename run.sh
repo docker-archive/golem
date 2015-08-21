@@ -19,7 +19,7 @@ else
 	DOCKER_BINARY=docker
 fi
 
-DISTRIBUTION_IMAGE=${DISTRIBUTION_IMAGE:-registry:2.0.1}
+DISTRIBUTION_IMAGE=${DISTRIBUTION_IMAGE:-registry:2.1.1}
 distributionMount=""
 if [ "$DISTRIBUTION_BUILD_DIR" != "" ]; then
 	distributionMount="-v ${DISTRIBUTION_BUILD_DIR}:/build/distribution"
