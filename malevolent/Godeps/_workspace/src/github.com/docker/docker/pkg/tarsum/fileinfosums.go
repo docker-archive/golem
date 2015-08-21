@@ -2,9 +2,7 @@ package tarsum
 
 import "sort"
 
-// FileInfoSumInterface provides an interface for accessing file checksum
-// information within a tar file. This info is accessed through interface
-// so the actual name and sum cannot be medled with.
+// This info will be accessed through interface so the actual name and sum cannot be medled with
 type FileInfoSumInterface interface {
 	// File name
 	Name() string
@@ -30,10 +28,9 @@ func (fis fileInfoSum) Pos() int64 {
 	return fis.pos
 }
 
-// FileInfoSums provides a list of FileInfoSumInterfaces.
 type FileInfoSums []FileInfoSumInterface
 
-// GetFile returns the first FileInfoSumInterface with a matching name.
+// GetFile returns the first FileInfoSumInterface with a matching name
 func (fis FileInfoSums) GetFile(name string) FileInfoSumInterface {
 	for i := range fis {
 		if fis[i].Name() == name {
@@ -43,7 +40,7 @@ func (fis FileInfoSums) GetFile(name string) FileInfoSumInterface {
 	return nil
 }
 
-// GetAllFile returns a FileInfoSums with all matching names.
+// GetAllFile returns a FileInfoSums with all matching names
 func (fis FileInfoSums) GetAllFile(name string) FileInfoSums {
 	f := FileInfoSums{}
 	for i := range fis {
@@ -54,7 +51,6 @@ func (fis FileInfoSums) GetAllFile(name string) FileInfoSums {
 	return f
 }
 
-// GetDuplicatePaths returns a FileInfoSums with all duplicated paths.
 func (fis FileInfoSums) GetDuplicatePaths() (dups FileInfoSums) {
 	seen := make(map[string]int, len(fis)) // allocate earl. no need to grow this map.
 	for i := range fis {
@@ -68,23 +64,17 @@ func (fis FileInfoSums) GetDuplicatePaths() (dups FileInfoSums) {
 	return dups
 }
 
-// Len returns the size of the FileInfoSums.
-func (fis FileInfoSums) Len() int { return len(fis) }
-
-// Swap swaps two FileInfoSum values if a FileInfoSums list.
+func (fis FileInfoSums) Len() int      { return len(fis) }
 func (fis FileInfoSums) Swap(i, j int) { fis[i], fis[j] = fis[j], fis[i] }
 
-// SortByPos sorts FileInfoSums content by position.
 func (fis FileInfoSums) SortByPos() {
 	sort.Sort(byPos{fis})
 }
 
-// SortByNames sorts FileInfoSums content by name.
 func (fis FileInfoSums) SortByNames() {
 	sort.Sort(byName{fis})
 }
 
-// SortBySums sorts FileInfoSums content by sums.
 func (fis FileInfoSums) SortBySums() {
 	dups := fis.GetDuplicatePaths()
 	if len(dups) > 0 {

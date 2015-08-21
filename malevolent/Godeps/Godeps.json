@@ -1,9 +1,6 @@
 {
 	"ImportPath": "github.com/dmcgowan/golem/malevolent",
 	"GoVersion": "go1.4.2",
-	"Packages": [
-		"."
-	],
 	"Deps": [
 		{
 			"ImportPath": "github.com/Sirupsen/logrus",
@@ -32,48 +29,43 @@
 		},
 		{
 			"ImportPath": "github.com/docker/docker/pkg/archive",
-			"Comment": "v1.4.1-5598-g5aeb48a",
-			"Rev": "5aeb48af7702be78774c36cfabbda1b3bf1c7b34"
+			"Comment": "v1.8.1",
+			"Rev": "d12ea79c9de6d144ce6bc7ccfe41c507cca6fd35"
 		},
 		{
 			"ImportPath": "github.com/docker/docker/pkg/fileutils",
-			"Comment": "v1.4.1-5598-g5aeb48a",
-			"Rev": "5aeb48af7702be78774c36cfabbda1b3bf1c7b34"
+			"Comment": "v1.8.1",
+			"Rev": "d12ea79c9de6d144ce6bc7ccfe41c507cca6fd35"
 		},
 		{
 			"ImportPath": "github.com/docker/docker/pkg/ioutils",
-			"Comment": "v1.4.1-5598-g5aeb48a",
-			"Rev": "5aeb48af7702be78774c36cfabbda1b3bf1c7b34"
+			"Comment": "v1.8.1",
+			"Rev": "d12ea79c9de6d144ce6bc7ccfe41c507cca6fd35"
 		},
 		{
 			"ImportPath": "github.com/docker/docker/pkg/pools",
-			"Comment": "v1.4.1-5598-g5aeb48a",
-			"Rev": "5aeb48af7702be78774c36cfabbda1b3bf1c7b34"
+			"Comment": "v1.8.1",
+			"Rev": "d12ea79c9de6d144ce6bc7ccfe41c507cca6fd35"
 		},
 		{
 			"ImportPath": "github.com/docker/docker/pkg/promise",
-			"Comment": "v1.4.1-5598-g5aeb48a",
-			"Rev": "5aeb48af7702be78774c36cfabbda1b3bf1c7b34"
-		},
-		{
-			"ImportPath": "github.com/docker/docker/pkg/random",
-			"Comment": "v1.4.1-5598-g5aeb48a",
-			"Rev": "5aeb48af7702be78774c36cfabbda1b3bf1c7b34"
+			"Comment": "v1.8.1",
+			"Rev": "d12ea79c9de6d144ce6bc7ccfe41c507cca6fd35"
 		},
 		{
 			"ImportPath": "github.com/docker/docker/pkg/system",
-			"Comment": "v1.4.1-5598-g5aeb48a",
-			"Rev": "5aeb48af7702be78774c36cfabbda1b3bf1c7b34"
+			"Comment": "v1.8.1",
+			"Rev": "d12ea79c9de6d144ce6bc7ccfe41c507cca6fd35"
 		},
 		{
 			"ImportPath": "github.com/docker/docker/pkg/tarsum",
-			"Comment": "v1.4.1-5598-g5aeb48a",
-			"Rev": "5aeb48af7702be78774c36cfabbda1b3bf1c7b34"
+			"Comment": "v1.8.1",
+			"Rev": "d12ea79c9de6d144ce6bc7ccfe41c507cca6fd35"
 		},
 		{
 			"ImportPath": "github.com/docker/docker/pkg/units",
-			"Comment": "v1.4.1-5598-g5aeb48a",
-			"Rev": "5aeb48af7702be78774c36cfabbda1b3bf1c7b34"
+			"Comment": "v1.8.1",
+			"Rev": "d12ea79c9de6d144ce6bc7ccfe41c507cca6fd35"
 		},
 		{
 			"ImportPath": "github.com/docker/libtrust",
