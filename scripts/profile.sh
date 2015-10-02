@@ -28,6 +28,7 @@ function golem-docker-dev() {
   pushd $GOPATH/src/github.com/docker/docker/
   make binary
   version=`cat VERSION`
+  popd
   golem-docker $version $@
 }
 
