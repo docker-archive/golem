@@ -23,12 +23,24 @@ function golem-docker() {
   DOCKER_BINARY="$DOCKER_BINARY" $GOPATH/src/github.com/dmcgowan/golem/run.sh $@
 }
 
+function path_save_cd() {
+	export GOLEM_SAVED_PATH="$(pwd)"
+	cd $1
+}
+
+function path_restore() {
+	if [ "$GOLEM_SAVED_PATH" != "" ]; then
+		cd $GOLEM_SAVED_PATH
+		unset GOLEM_SAVED_PATH
+	fi
+}
+
 # golem-docker-dev is a function to run tests on active docker development directory
 function golem-docker-dev() {
-  pushd $GOPATH/src/github.com/docker/docker/
+  path_save_cd $GOPATH/src/github.com/docker/docker/
+  trap path_restore EXIT
   make binary
   version=`cat VERSION`
-  popd
   golem-docker $version $@
 }
 
