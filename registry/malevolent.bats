@@ -129,15 +129,16 @@ function setup() {
 	poison1="${truncid1}d77ca0863fb7f054c0a276d7e227b5e9a5d62b497979a481fa32"
         truncid2="888cf9284131"
 	poison2="${truncid2}d77ca0863fb7f054c0a276d7e227b5e9a5d62b497979a481fa64"
-	image1="$host/$base/image1/poison:$poison1"
+
+	image1="$host/$base/image1/alteredid:$poison1"
 	tempImage $image1
 	run docker push $image1
 	echo "$output"
 	[ "$status" -eq 0 ]
 	has_digest "$output"
 
-	image2="$host/$base/image2/poison:$poison2"
-	docker tag $image1 $image2
+	image2="$host/$base/image2/alteredid:$poison2"
+	docker tag -f $image1 $image2
 	run docker push $image2
 	echo "$output"
 	[ "$status" -eq 0 ]
@@ -163,6 +164,10 @@ function setup() {
 	# Test images have same ID and not the poison
 	id1=$(docker images -q $image1)
 	id2=$(docker images -q $image2)
+
+	# Remove old images
+	docker rmi -f $image1
+	docker rmi -f $image2
 
 	[ "$id1" == "$id2" ]
 
