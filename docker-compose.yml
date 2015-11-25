@@ -17,37 +17,19 @@ nginx:
   links:
     - registryv1:registryv1
     - registryv2:registryv2
-    - notaryserverhttp:notaryserverhttp
 registryv1:
   image: registry:0.9.1
   ports:
     - "5000"
 registryv2:
-  image: golem/distribution:latest
+  image: registry:2.1.1 # golem/distribution:latest
   ports:
     - "5000"
-notaryserver:
-  image: golem/notary:latest
-  ports:
-   - "8080"
-   - "4443:4443"
-  volumes:
-   - notary-server/notary-config.json:/go/src/github.com/docker/notary/cmd/notary-server/config.json:ro
-   - notary-server/certs:/certs:ro
-notaryserverhttp:
-  image: golem/notary:latest
-  ports:
-   - "8080"
-   - "4443"
-  volumes:
-   - notary-server/notary-http-config.json:/go/src/github.com/docker/notary/cmd/notary-server/config.json:ro
-   - notary-server/certs:/certs:ro
 malevolent:
   build: "malevolent"
-  command: "-l 0.0.0.0:6666 -r http://registryv2:5000 -n http://notaryserverhttp:4443 -c /certs/localregistry.cert -k /certs/localregistry.key"
+  command: "-l 0.0.0.0:6666 -r http://registryv2:5000 -c /certs/localregistry.cert -k /certs/localregistry.key"
   links:
     - registryv2:registryv2
-    - notaryserverhttp:notaryserverhttp
   volumes:
    - malevolent/certs:/certs:ro
   ports:

@@ -27,4 +27,4 @@ docker pull "${TEST_REPO}:${TEST_TAG}"
 export TEST_SKIP_PULL="true"
 
 # Run the tests.
-execute time bats -p $@
+execute time bats -t $@
