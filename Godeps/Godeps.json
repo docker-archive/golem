@@ -107,11 +107,11 @@
 		},
 		{
 			"ImportPath": "github.com/jlhawn/dockramp/archive",
-			"Rev": "267c07da0357ed884c3ac0933179ee53b3948cf5"
+			"Rev": "0f8ee6a3cd34789ebe4d99e3c60280ae572838c9"
 		},
 		{
 			"ImportPath": "github.com/jlhawn/dockramp/build",
-			"Rev": "267c07da0357ed884c3ac0933179ee53b3948cf5"
+			"Rev": "0f8ee6a3cd34789ebe4d99e3c60280ae572838c9"
 		},
 		{
 			"ImportPath": "github.com/jlhawn/tarsum",
