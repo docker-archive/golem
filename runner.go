@@ -1,6 +1,9 @@
 package main
 
 import (
+	"archive/tar"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -17,9 +20,11 @@ import (
 	"github.com/dmcgowan/golem/buildutil"
 	"github.com/dmcgowan/golem/clientutil"
 	"github.com/dmcgowan/golem/versionutil"
+	"github.com/docker/distribution/digest"
 	"github.com/docker/distribution/reference"
 	dockerclient "github.com/fsouza/go-dockerclient"
 	"github.com/jlhawn/dockramp/build"
+	"github.com/termie/go-shutil"
 )
 
 func main() {
@@ -79,11 +84,6 @@ func main() {
 		logrus.Fatalf("Invalid docker version %q: %v", previousDockerVersion, err)
 	}
 
-	images := []reference.NamedTagged{
-		ensureTagged(distributionImage),
-		ensureTagged(legacyRegistryImage),
-		ensureTagged(notaryImage),
-	}
 	if buildCache == "" {
 		td, err := ioutil.TempDir("", "build-cache-")
 		if err != nil {
@@ -117,6 +117,35 @@ func main() {
 
 	logrus.Debugf("Running %s", executablePath)
 
+	conf := BaseImageConfiguration{
+		Base: ensureTagged("dmcgowan/golem:latest"),
+		ExtraImages: []reference.NamedTagged{
+			ensureTagged("nginx:1.9"),
+			ensureTagged("golang:1.4"),
+			ensureTagged("hello-world:latest"),
+		},
+		CustomImages: []CustomImage{
+			{
+				Source: distributionImage,
+				Target: ensureTagged("golem-distribution:latest"),
+			},
+			{
+				Source: legacyRegistryImage,
+				Target: ensureTagged("golem-registry:latest"),
+			},
+			{
+				Source: notaryImage,
+				Target: ensureTagged("golem-notary:latest"),
+			},
+		},
+		DockerLoadVersion: pv,
+		DockerVersion:     dv,
+	}
+	baseImage, err := BuildBaseImage(client, co, c, conf)
+	if err != nil {
+		logrus.Fatalf("Unable to create tempdir: %v", err)
+	}
+
 	// Create temp build directory
 	td, err := ioutil.TempDir("", "golem-")
 	if err != nil {
@@ -131,36 +160,21 @@ func main() {
 	}
 	defer df.Close()
 
-	fmt.Fprintf(df, "FROM %s\n", "dmcgowan/golem:latest")
+	fmt.Fprintf(df, "FROM %s\n", baseImage)
 
-	// Add base Docker images to load
-	for _, ref := range images {
-		ensureImage(client, ref)
-	}
-
-	// TODO: Use name derived of hash of current docker version + image ids
-	it, err := os.OpenFile(filepath.Join(td, "images.tar"), os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		logrus.Fatalf("Error creating images tar file: %v", err)
-	}
-	if err := saveImages(client, it, images); err != nil {
-		it.Close()
-		logrus.Fatalf("Error saving images: %v", err)
-	}
-	if err := it.Close(); err != nil {
-		logrus.Fatalf("Error closing image tar: %v", err)
-	}
-	fmt.Fprintln(df, "COPY ./images.tar /images.tar")
-
-	// Add Docker Binaries (docker test specific)
-	c.InstallVersion(dv, filepath.Join(td, "docker"))
-	c.InstallVersion(pv, filepath.Join(td, "docker-previous"))
-	fmt.Fprintln(df, "COPY ./docker /usr/bin/docker")
-	fmt.Fprintln(df, "COPY ./docker-previous /usr/bin/docker-previous")
-	// TODO: Handle init files
-
+	// TODO: Move to base image
 	buildutil.CopyFile(executablePath, filepath.Join(td, "golem_runner"), 0755)
 	fmt.Fprintln(df, "COPY ./golem_runner /usr/bin/golem_runner")
+
+	logrus.Debugf("Copying %s to %s", testDir, filepath.Join(td, "runner"))
+	if err := shutil.CopyTree(testDir, filepath.Join(td, "runner"), nil); err != nil {
+		logrus.Fatalf("Error copying test directory: %v", err)
+	}
+	//logrus.Debugf("Symlinking %s to %s", testDir, filepath.Join(td, "runner"))
+	//if err := os.Symlink(testDir, filepath.Join(td, "runner")); err != nil {
+	//	logrus.Fatalf("Error closing dockerfile: %v", err)
+	//}
+	fmt.Fprintln(df, "COPY ./runner/ /runner")
 
 	if err := df.Close(); err != nil {
 		logrus.Fatalf("Error closing dockerfile: %v", err)
@@ -179,7 +193,6 @@ func main() {
 
 	// Start test container
 	hc := &dockerclient.HostConfig{
-		Binds:      []string{fmt.Sprintf("%s:/runner:ro", testDir)},
 		Privileged: true,
 	}
 	env := []string{}
@@ -189,16 +202,8 @@ func main() {
 
 	cc := dockerclient.CreateContainerOptions{
 		Config: &dockerclient.Config{
-			Image: "golemrunner:latest",
-			Cmd:   []string{"/usr/bin/golem_runner"},
-			//Mounts: []dockerclient.Mount{
-			//	{
-			//		Source:      testDir,
-			//		Destination: "/runner",
-			//		Mode:        "ro",
-			//		RW:          false,
-			//	},
-			//},
+			Image:      "golemrunner:latest",
+			Cmd:        []string{"/usr/bin/golem_runner"},
 			Env:        env,
 			WorkingDir: "/runner",
 		},
@@ -241,38 +246,53 @@ func ensureTagged(image string) reference.NamedTagged {
 	return named
 }
 
-func ensureImage(client *dockerclient.Client, ref reference.NamedTagged) {
-	// TODO: Use ID to generate hash of all images for caching exports
-	_, err := client.InspectImage(ref.String())
+func ensureImage(client *dockerclient.Client, image string) (string, error) {
+	info, err := client.InspectImage(image)
 	if err == nil {
-		logrus.Debugf("Image found locally %s", ref.String())
-		return
+		logrus.Debugf("Image found locally %s", image)
+		return info.ID, nil
 	}
 	if err != dockerclient.ErrNoSuchImage {
-		logrus.Fatalf("Error inspecting image %q: %v", ref, err)
+		logrus.Errorf("Error inspecting image %q: %v", image, err)
+		return "", err
 	}
 
-	logrus.Infof("Pulling image %s", ref.String())
+	// Image must be tagged reference if it does not exist
+	ref, err := reference.Parse(image)
+	if err != nil {
+		logrus.Debugf("Image is not valid reference %q: %v", image, err)
+	}
+	tagged, ok := ref.(reference.NamedTagged)
+	if !ok {
+		logrus.Debugf("Tagged reference required %q", image)
+		return "", errors.New("invalid reference, tag needed")
+	}
+
+	logrus.Infof("Pulling image %s", tagged.String())
 
 	pullOptions := dockerclient.PullImageOptions{
-		Repository:   ref.Name(),
-		Tag:          ref.Tag(),
+		Repository:   tagged.Name(),
+		Tag:          tagged.Tag(),
 		OutputStream: os.Stdout,
 	}
 	if err := client.PullImage(pullOptions, dockerclient.AuthConfiguration{}); err != nil {
-		logrus.Fatalf("Error pulling image %q: %v", ref, err)
+		logrus.Errorf("Error pulling image %q: %v", tagged.String(), err)
+		return "", err
 	}
+	// TODO: Get pulled digest and inspect by digest
+	info, err = client.InspectImage(tagged.String())
+	if err != nil {
+		return "", nil
+	}
+
+	return info.ID, nil
 }
 
 // Save images
-func saveImages(client *dockerclient.Client, out io.Writer, images []reference.NamedTagged) error {
-	var names []string
-	for _, ref := range images {
-		names = append(names, ref.String())
-	}
-	logrus.Debugf("Exporting images %s", strings.Join(names, " "))
+func saveImages(client *dockerclient.Client, out io.Writer, images []string) error {
+	logrus.Debugf("Exporting images %s", strings.Join(images, " "))
 	ec := dockerclient.ExportImagesOptions{
-		Names:        names,
+		Names:        images,
 		OutputStream: out,
 	}
 	return client.ExportImages(ec)
@@ -303,9 +323,20 @@ func runnerMain() {
 		logrus.Fatalf("Unable to load images: %v", err)
 	}
 
+	if err := RunScript("/usr/bin/docker-previous", "images"); err != nil {
+		logrus.Fatalf("Error running docker images")
+	}
+
 	logrus.Printf("Stopping daemon")
 	if err := pk(); err != nil {
 		logrus.Fatalf("Error killing daemon %v", err)
+	}
+
+	if err := RunScript("ls", "-l", "/runner"); err != nil {
+		logrus.Fatalf("Error running docker images")
+	}
+	if err := RunScript("/bin/sh", "-c", "\"pwd\""); err != nil {
+		logrus.Fatalf("Error running docker images")
 	}
 
 	logrus.Printf("Running pre-test scripts")
@@ -399,4 +430,247 @@ func StartDaemon(binary string) (*dockerclient.Client, func() error, error) {
 	}
 
 	return client, cmd.Process.Kill, nil
+}
+
+type tag struct {
+	Tag   reference.NamedTagged
+	Image string
+}
+
+func tarCopy(w *tar.Writer, r *tar.Reader) error {
+	for {
+		hdr, err := r.Next()
+		if err == io.EOF {
+			// end of tar archive
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := w.WriteHeader(hdr); err != nil {
+			return err
+		}
+		if _, err := io.Copy(w, r); err != nil {
+			return err
+		}
+	}
+}
+
+func addFile(w *tar.Writer, name string, contents []byte) error {
+	// TODO: Create file info
+	fi, err := os.Stat("/etc/hosts")
+	if err != nil {
+		return err
+	}
+	h, err := tar.FileInfoHeader(fi, "")
+	if err != nil {
+		return err
+	}
+	h.Name = name
+	h.Size = int64(len(contents))
+	if err := w.WriteHeader(h); err != nil {
+		return err
+	}
+	if _, err := w.Write(contents); err != nil {
+		return err
+	}
+	return nil
+}
+
+func copyImageTarWithTagMap(source io.Reader, target string, tags []tag) error {
+	f, err := os.Create(target)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	tw := tar.NewWriter(f)
+	tr := tar.NewReader(source)
+
+	layers := map[string]struct{}{}
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			// end of tar archive
+			break
+		}
+		logrus.Debugf("Copying file %q", hdr.Name)
+		if filename := filepath.Base(hdr.Name); len(filename) >= 64 {
+			layers[filename] = struct{}{}
+		}
+		if err != nil {
+			return err
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		if _, err := io.Copy(tw, tr); err != nil {
+			return err
+		}
+	}
+
+	repositories := map[string]map[string]string{}
+	for _, t := range tags {
+		if _, ok := layers[t.Image]; !ok {
+			return fmt.Errorf("missing layer %s", t.Image)
+		}
+		m, ok := repositories[t.Tag.Name()]
+		if ok {
+			m[t.Tag.Tag()] = t.Image
+		} else {
+			repositories[t.Tag.Name()] = map[string]string{
+				t.Tag.Tag(): t.Image,
+			}
+		}
+	}
+
+	c, err := json.Marshal(repositories)
+	if err != nil {
+		return err
+	}
+
+	logrus.Debugf("Writing repositories with %s", string(c))
+	if err := addFile(tw, "repositories", c); err != nil {
+		return err
+	}
+
+	return tw.Close()
+}
+
+type CustomImage struct {
+	Source string
+	Target reference.NamedTagged
+}
+
+type BaseImageConfiguration struct {
+	Base         reference.Named
+	ExtraImages  []reference.NamedTagged
+	CustomImages []CustomImage
+
+	DockerLoadVersion versionutil.Version
+	DockerVersion     versionutil.Version
+	// Images (References and Targets)
+	// Images cache
+	// Image index (keyed by hash of images + versions)
+	// Docker load version
+	// Docker version
+	// Runner binary
+}
+
+// BuildBaseImage builds a base image using the given configuration
+// and returns an image id for the given image
+func BuildBaseImage(client *dockerclient.Client, co *clientutil.ClientOptions, c buildutil.BuildCache, conf BaseImageConfiguration) (string, error) {
+	tags := []tag{}
+	images := []string{}
+	for _, ref := range conf.ExtraImages {
+		id, err := ensureImage(client, ref.String())
+		if err != nil {
+			return "", err
+		}
+		tags = append(tags, tag{
+			Tag:   ref,
+			Image: id,
+		})
+		images = append(images, id)
+	}
+	for _, ci := range conf.CustomImages {
+		id, err := ensureImage(client, ci.Source)
+		if err != nil {
+			return "", err
+		}
+		tags = append(tags, tag{
+			Tag:   ci.Target,
+			Image: id,
+		})
+
+		images = append(images, id)
+	}
+
+	dgstr := digest.Canonical.New()
+	// TODO: Incorporate image id
+	fmt.Fprintf(dgstr.Hash(), "%s\n\n", conf.Base.String())
+
+	// TODO: Sort tags, write
+	for _, t := range tags {
+		fmt.Fprintf(dgstr.Hash(), "%s %s\n", t.Tag.String(), t.Image)
+	}
+	fmt.Fprintln(dgstr.Hash())
+
+	fmt.Fprintln(dgstr.Hash(), conf.DockerLoadVersion)
+	fmt.Fprintln(dgstr.Hash(), conf.DockerVersion)
+
+	// TODO: Add hash of binary
+
+	// Calculate configuration hash
+	// Check if in index
+	// Check if image exists
+
+	// Create temp build directory
+	td, err := ioutil.TempDir("", "golem-")
+	if err != nil {
+		return "", fmt.Errorf("unable to create tempdir: %s", err)
+	}
+	defer os.RemoveAll(td)
+
+	// Create Dockerfile in tempDir
+	df, err := os.OpenFile(filepath.Join(td, "Dockerfile"), os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return "", fmt.Errorf("unable to create dockerfile: %s", err)
+	}
+	defer df.Close()
+
+	fmt.Fprintf(df, "FROM %s\n", conf.Base)
+
+	// TODO: Check if has tar of images in cache (sort images and hash)
+	// TODO: Create tar of images, save in cache
+
+	r, w := io.Pipe()
+	errC := make(chan error)
+	go func() {
+		err := copyImageTarWithTagMap(r, filepath.Join(td, "images.tar"), tags)
+		if err != nil {
+			logrus.Error("Error copying image with tag map: %v", err)
+			r.CloseWithError(err)
+		}
+		errC <- err
+		close(errC)
+
+	}()
+	if err := saveImages(client, w, images); err != nil {
+		w.CloseWithError(err)
+		logrus.Fatalf("Error saving images: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		logrus.Fatalf("Error closing pipe: %v", err)
+	}
+	if err := <-errC; err != nil {
+		logrus.Fatalf("Error copying to tag map: %v", err)
+	}
+	fmt.Fprintln(df, "COPY ./images.tar /images.tar")
+
+	// Add Docker Binaries (docker test specific)
+	c.InstallVersion(conf.DockerVersion, filepath.Join(td, "docker"))
+	c.InstallVersion(conf.DockerLoadVersion, filepath.Join(td, "docker-previous"))
+	fmt.Fprintln(df, "COPY ./docker /usr/bin/docker")
+	fmt.Fprintln(df, "COPY ./docker-previous /usr/bin/docker-previous")
+	// TODO: Handle init files
+
+	// TODO: Install executable
+	//buildutil.CopyFile(executablePath, filepath.Join(td, "golem_runner"), 0755)
+	//fmt.Fprintln(df, "COPY ./golem_runner /usr/bin/golem_runner")
+
+	// Call build
+	builder, err := build.NewBuilder(co.DaemonURL(), co.TLSConfig(), td, "", "")
+	if err != nil {
+		logrus.Errorf("Error creating builder: %v", err)
+		return "", err
+	}
+
+	if err := builder.Run(); err != nil {
+		logrus.Errorf("Error building: %v", err)
+		return "", err
+	}
+
+	// Update index
+	return builder.ImageID(), nil
 }
