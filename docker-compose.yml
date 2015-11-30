@@ -18,11 +18,11 @@ nginx:
     - registryv1:registryv1
     - registryv2:registryv2
 registryv1:
-  image: registry:0.9.1
+  image: golem-registry:latest
   ports:
     - "5000"
 registryv2:
-  image: registry:2.1.1 # golem/distribution:latest
+  image: golem-distribution:latest
   ports:
     - "5000"
 malevolent:
