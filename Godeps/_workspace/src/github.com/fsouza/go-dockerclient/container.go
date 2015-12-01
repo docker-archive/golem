@@ -5,12 +5,14 @@
 package docker
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -908,6 +910,41 @@ func (c *Client) DownloadFromContainer(id string, opts DownloadFromContainerOpti
 		setRawTerminal: true,
 		stdout:         opts.OutputStream,
 	})
+}
+
+// ContainerPathStat is the stat information for a container path.
+//
+// See https://goo.gl/KnZJDX for more details.
+type ContainerPathStat struct {
+	Name       string      `json:"name"`
+	Size       int64       `json:"size"`
+	Mode       os.FileMode `json:"mode"`
+	Mtime      time.Time   `json:"mtime"`
+	LinkTarget string      `json:"linkTarget"`
+}
+
+// StatContainerPath gets the stat for a path inside a container.
+//
+// See https://goo.gl/X3itLe for more details.
+func (c *Client) StatContainerPath(id, path string) (*ContainerPathStat, error) {
+	params := make(url.Values)
+	params.Set("path", path)
+
+	url := fmt.Sprintf("/containers/%s/archive?%s", id, params.Encode())
+	response, err := c.do("HEAD", url, doOptions{})
+	if err != nil {
+		return nil, err
+	}
+	response.Body.Close()
+	jsonStat, err := base64.StdEncoding.DecodeString(response.Header.Get("X-Docker-Container-Path-Stat"))
+	if err != nil {
+		return nil, err
+	}
+	var stat ContainerPathStat
+	if err := json.Unmarshal(jsonStat, &stat); err != nil {
+		return nil, err
+	}
+	return &stat, nil
 }
 
 // CopyFromContainerOptions has been DEPRECATED, please use DownloadFromContainerOptions along with DownloadFromContainer.
