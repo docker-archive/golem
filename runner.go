@@ -39,6 +39,7 @@ func main() {
 		notaryImage           string
 		dockerVersion         string
 		previousDockerVersion string
+		cacheDir              string
 		buildCache            string
 		testDir               string
 	)
@@ -50,7 +51,8 @@ func main() {
 	flag.StringVar(&notaryImage, "-notary-image", "distribution/notary_notaryserver:0.1.4", "Notary Server image")
 	flag.StringVar(&dockerVersion, "dv", "1.9.0", "Docker version to test")
 	flag.StringVar(&previousDockerVersion, "pv", "1.8.3", "Previous Docker version (for upgrade from testing)")
-	flag.StringVar(&buildCache, "bc", "", "Build cache location")
+	flag.StringVar(&cacheDir, "c", "", "Cache directory")
+	flag.StringVar(&buildCache, "bc", "", "Build cache location, if outside of default cache directory")
 	flag.StringVar(&testDir, "d", "", "Directory containing tests (default: current working directory)")
 
 	flag.Parse()
@@ -84,23 +86,31 @@ func main() {
 		logrus.Fatalf("Invalid docker version %q: %v", previousDockerVersion, err)
 	}
 
-	if buildCache == "" {
+	if cacheDir == "" {
 		td, err := ioutil.TempDir("", "build-cache-")
 		if err != nil {
 			logrus.Fatalf("Error creating tempdir: %v", err)
 		}
-		buildCache = td
+		cacheDir = td
 		defer os.RemoveAll(td)
 	}
-	c := buildutil.NewFSBuildCache(buildCache)
 
-	client, err := dockerclient.NewClient(co.DaemonURL())
+	if buildCache == "" {
+		buildCache = filepath.Join(cacheDir, "builds")
+		if err := os.MkdirAll(buildCache, 0755); err != nil {
+			logrus.Fatalf("Error creating build cache directory")
+		}
+	}
+	c := CacheConfiguration{
+		ImageCache: &ImageCache{
+			root: filepath.Join(cacheDir, "images"),
+		},
+		BuildCache: buildutil.NewFSBuildCache(buildCache),
+	}
+
+	client, err := NewDockerClient(co)
 	if err != nil {
 		logrus.Fatalf("Failed to create client: %v", err)
-	}
-	if tlsConfig := co.TLSConfig(); tlsConfig != nil {
-		client.TLSConfig = tlsConfig
-		client.HTTPClient.Transport.(*http.Transport).TLSClientConfig = tlsConfig
 	}
 
 	v, err := client.Version()
@@ -141,7 +151,7 @@ func main() {
 		DockerLoadVersion: pv,
 		DockerVersion:     dv,
 	}
-	baseImage, err := BuildBaseImage(client, co, c, conf)
+	baseImage, err := BuildBaseImage(client, conf, c)
 	if err != nil {
 		logrus.Fatalf("Unable to create tempdir: %v", err)
 	}
@@ -180,7 +190,7 @@ func main() {
 		logrus.Fatalf("Error closing dockerfile: %v", err)
 	}
 
-	builder, err := build.NewBuilder(co.DaemonURL(), co.TLSConfig(), td, "", "golemrunner:latest")
+	builder, err := client.NewBuilder(td, "", "golemrunner:latest")
 	if err != nil {
 		logrus.Fatalf("Error creating builder: %v", err)
 	}
@@ -246,7 +256,7 @@ func ensureTagged(image string) reference.NamedTagged {
 	return named
 }
 
-func ensureImage(client *dockerclient.Client, image string) (string, error) {
+func ensureImage(client DockerClient, image string) (string, error) {
 	info, err := client.InspectImage(image)
 	if err == nil {
 		logrus.Debugf("Image found locally %s", image)
@@ -289,7 +299,7 @@ func ensureImage(client *dockerclient.Client, image string) (string, error) {
 }
 
 // Save images
-func saveImages(client *dockerclient.Client, out io.Writer, images []string) error {
+func saveImages(client DockerClient, out io.Writer, images []string) error {
 	logrus.Debugf("Exporting images %s", strings.Join(images, " "))
 	ec := dockerclient.ExportImagesOptions{
 		Names:        images,
@@ -537,9 +547,55 @@ func copyImageTarWithTagMap(source io.Reader, target string, tags []tag) error {
 	return tw.Close()
 }
 
+type ImageCache struct {
+	root string
+}
+
+func (ic *ImageCache) imageFile(dgst digest.Digest) string {
+	return filepath.Join(ic.root, dgst.Algorithm().String(), dgst.Hex())
+}
+
+func (ic *ImageCache) GetImage(dgst digest.Digest) (string, error) {
+	f, err := os.Open(ic.imageFile(dgst))
+	if err != nil {
+		// TODO: Detect does not exist error and return const error
+		return "", err
+	}
+	defer f.Close()
+
+	b, err := ioutil.ReadAll(f)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(string(b)), nil
+}
+
+func (ic *ImageCache) SaveImage(dgst digest.Digest, id string) error {
+	fp := ic.imageFile(dgst)
+	if err := os.MkdirAll(filepath.Dir(fp), 0755); err != nil {
+		return err
+	}
+	f, err := os.Create(fp)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := fmt.Fprintf(f, "%s", id); err != nil {
+		return err
+	}
+	return nil
+}
+
 type CustomImage struct {
 	Source string
 	Target reference.NamedTagged
+}
+
+type CacheConfiguration struct {
+	ImageCache *ImageCache
+	BuildCache buildutil.BuildCache
 }
 
 type BaseImageConfiguration struct {
@@ -549,8 +605,8 @@ type BaseImageConfiguration struct {
 
 	DockerLoadVersion versionutil.Version
 	DockerVersion     versionutil.Version
+
 	// Images (References and Targets)
-	// Images cache
 	// Image index (keyed by hash of images + versions)
 	// Docker load version
 	// Docker version
@@ -559,7 +615,7 @@ type BaseImageConfiguration struct {
 
 // BuildBaseImage builds a base image using the given configuration
 // and returns an image id for the given image
-func BuildBaseImage(client *dockerclient.Client, co *clientutil.ClientOptions, c buildutil.BuildCache, conf BaseImageConfiguration) (string, error) {
+func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheConfiguration) (string, error) {
 	tags := []tag{}
 	images := []string{}
 	for _, ref := range conf.ExtraImages {
@@ -599,7 +655,13 @@ func BuildBaseImage(client *dockerclient.Client, co *clientutil.ClientOptions, c
 	fmt.Fprintln(dgstr.Hash(), conf.DockerLoadVersion)
 	fmt.Fprintln(dgstr.Hash(), conf.DockerVersion)
 
-	// TODO: Add hash of binary
+	imageHash := dgstr.Digest()
+
+	id, err := c.ImageCache.GetImage(imageHash)
+	if err == nil {
+		return id, nil
+	}
+	logrus.Debugf("Building image, could not find in cache: %v", err)
 
 	// Calculate configuration hash
 	// Check if in index
@@ -649,8 +711,8 @@ func BuildBaseImage(client *dockerclient.Client, co *clientutil.ClientOptions, c
 	fmt.Fprintln(df, "COPY ./images.tar /images.tar")
 
 	// Add Docker Binaries (docker test specific)
-	c.InstallVersion(conf.DockerVersion, filepath.Join(td, "docker"))
-	c.InstallVersion(conf.DockerLoadVersion, filepath.Join(td, "docker-previous"))
+	c.BuildCache.InstallVersion(conf.DockerVersion, filepath.Join(td, "docker"))
+	c.BuildCache.InstallVersion(conf.DockerLoadVersion, filepath.Join(td, "docker-previous"))
 	fmt.Fprintln(df, "COPY ./docker /usr/bin/docker")
 	fmt.Fprintln(df, "COPY ./docker-previous /usr/bin/docker-previous")
 	// TODO: Handle init files
@@ -660,7 +722,7 @@ func BuildBaseImage(client *dockerclient.Client, co *clientutil.ClientOptions, c
 	//fmt.Fprintln(df, "COPY ./golem_runner /usr/bin/golem_runner")
 
 	// Call build
-	builder, err := build.NewBuilder(co.DaemonURL(), co.TLSConfig(), td, "", "")
+	builder, err := client.NewBuilder(td, "", "")
 	if err != nil {
 		logrus.Errorf("Error creating builder: %v", err)
 		return "", err
@@ -672,5 +734,11 @@ func BuildBaseImage(client *dockerclient.Client, co *clientutil.ClientOptions, c
 	}
 
 	// Update index
-	return builder.ImageID(), nil
+	imageId := builder.ImageID()
+
+	if err := c.ImageCache.SaveImage(imageHash, imageId); err != nil {
+		logrus.Errorf("Unable to save image by hash %s: %s", imageHash, imageId)
+	}
+
+	return imageId, nil
 }
