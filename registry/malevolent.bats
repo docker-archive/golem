@@ -114,8 +114,12 @@ function setup() {
 	[ "$status" -eq 0 ]
 
 	# Test images have same ID and not the poison
-	id1=$(docker images -q $image1)
-	id2=$(docker images -q $image2)
+	id1=$(docker inspect --format="{{.Id}}" $image1)
+	id2=$(docker inspect --format="{{.Id}}" $image2)
+
+	# Remove old images
+	docker rmi -f $image1
+	docker rmi -f $image2
 
 	[ "$id1" != "$id2" ]
 
@@ -162,8 +166,8 @@ function setup() {
 	[ "$status" -eq 0 ]
 
 	# Test images have same ID and not the poison
-	id1=$(docker images -q $image1)
-	id2=$(docker images -q $image2)
+	id1=$(docker inspect --format="{{.Id}}" $image1)
+	id2=$(docker inspect --format="{{.Id}}" $image2)
 
 	# Remove old images
 	docker rmi -f $image1
