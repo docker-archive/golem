@@ -1,16 +1,15 @@
 package main
 
 import (
-	"archive/tar"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -256,6 +255,10 @@ func main() {
 			Cmd:        []string{"/usr/bin/golem_runner"},
 			Env:        env,
 			WorkingDir: "/runner",
+			Volumes: map[string]struct{}{
+				"/var/log/docker": struct{}{},
+			},
+			VolumeDriver: "local",
 		},
 		HostConfig: hc,
 	}
@@ -348,14 +351,38 @@ func ensureImage(client DockerClient, image string) (string, error) {
 	return info.ID, nil
 }
 
-// Save images
-func saveImages(client DockerClient, out io.Writer, images []string) error {
-	logrus.Debugf("Exporting images %s", strings.Join(images, " "))
-	ec := dockerclient.ExportImagesOptions{
-		Names:        images,
-		OutputStream: out,
+func saveImage(client DockerClient, filename, imgID string) error {
+	// TODO: must not exist
+	f, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("error creating image tar file: %v", err)
 	}
-	return client.ExportImages(ec)
+	defer f.Close()
+	logrus.Debugf("Exporting image %s to %s", imgID, filename)
+	ec := dockerclient.ExportImageOptions{
+		Name:         imgID,
+		OutputStream: f,
+	}
+	return client.ExportImage(ec)
+}
+
+func saveTagMap(filename string, tags []tag) error {
+	m := map[string][]string{}
+	for _, t := range tags {
+		m[t.Image] = append(m[t.Image], t.Tag.String())
+	}
+
+	mf, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("error opening images.json file: %v", err)
+	}
+	defer mf.Close()
+
+	if err := json.NewEncoder(mf).Encode(m); err != nil {
+		return fmt.Errorf("error encoding tag map: %v")
+	}
+
+	return nil
 }
 
 func runnerMain() {
@@ -370,54 +397,71 @@ func runnerMain() {
 		logrus.Fatalf("Error reading /var/lib/docker: %v", err)
 	}
 
-	// TODO: Check whether or not this is expected to be clean
-	if len(info) == 0 {
-		logrus.Printf("Loading docker images")
-		pc, pk, err := StartDaemon("/usr/bin/docker-load")
-		if err != nil {
-			logrus.Fatalf("Error starting daemon: %s", err)
-		}
+	if len(info) != 0 {
+		// TODO: Check whether or not this is expected to be clean
+		logrus.Infof("/var/lib/docker is not clean")
+	}
 
-		logrus.Printf("Loading images at /images.tar")
-		ti, err := os.Open("/images.tar")
-		if err != nil {
-			logrus.Fatalf("Unable to open /images.tar: %v", err)
-		}
-		defer ti.Close()
-		loadOptions := dockerclient.LoadImageOptions{
-			InputStream: ti,
-		}
-		if err := pc.LoadImage(loadOptions); err != nil {
-			logrus.Fatalf("Unable to load images: %v", err)
-		}
+	scriptCapturer := newFileCapturer("scripts")
+	defer scriptCapturer.Close()
+	loadCapturer := newFileCapturer("load")
+	defer loadCapturer.Close()
+	daemonCapturer := newFileCapturer("daemon")
+	defer daemonCapturer.Close()
+	testCapturer := NewConsoleLogCapturer()
+	defer testCapturer.Close()
 
-		if err := RunScript("/usr/bin/docker-load", "images"); err != nil {
-			logrus.Fatalf("Error running docker images")
-		}
+	// Load tag map
+	logrus.Printf("Loading docker images")
+	pc, pk, err := StartDaemon("/usr/bin/docker-load", loadCapturer)
+	if err != nil {
+		logrus.Fatalf("Error starting daemon: %v", err)
+	}
 
-		logrus.Printf("Stopping daemon")
-		if err := pk(); err != nil {
-			logrus.Fatalf("Error killing daemon %v", err)
+	// TODO: Remove all containers
+	containers, err := pc.ListContainers(dockerclient.ListContainersOptions{All: true})
+	if err != nil {
+		logrus.Fatalf("Error listing containers: %v", err)
+	}
+	for _, container := range containers {
+		logrus.Printf("Removing container %s", container.ID)
+		removeOptions := dockerclient.RemoveContainerOptions{
+			ID:            container.ID,
+			RemoveVolumes: true,
+			Force:         true,
+		}
+		if err := pc.RemoveContainer(removeOptions); err != nil {
+			logrus.Fatalf("Error removing container: %v", err)
 		}
 	}
 
-	// TODO: Load options from test directory
-	if err := RunScript("ls", "-l", "/runner"); err != nil {
+	if err := syncImages(pc, "/images"); err != nil {
+		logrus.Fatalf("Error syncing images: %v", err)
+	}
+
+	if err := RunScript(scriptCapturer, "/usr/bin/docker-load", "images"); err != nil {
 		logrus.Fatalf("Error running docker images")
 	}
-	if err := RunScript("/bin/sh", "-c", "\"pwd\""); err != nil {
-		logrus.Fatalf("Error running docker images")
+
+	logrus.Printf("Stopping daemon")
+	if err := pk(); err != nil {
+		logrus.Fatalf("Error killing daemon %v", err)
 	}
 
 	logrus.Printf("Running pre-test scripts")
-	if err := RunScript("/bin/sh", "./install_certs.sh", "localregistry"); err != nil {
+	if err := RunScript(scriptCapturer, "/bin/sh", "./install_certs.sh", "localregistry"); err != nil {
 		logrus.Fatalf("Error running pre-test script: %v", err)
 	}
 
 	logrus.Printf("Starting daemon")
-	client, k, err := StartDaemon("/usr/bin/docker")
+	client, k, err := StartDaemon("/usr/bin/docker", daemonCapturer)
 	if err != nil {
 		logrus.Fatalf("Error starting daemon: %s", err)
+	}
+
+	logrus.Printf("Build compose images")
+	if err := RunScript(scriptCapturer, "docker-compose", "build", "--no-cache"); err != nil {
+		logrus.Fatalf("Error running docker compose build: %v", err)
 	}
 
 	logrus.Printf("Dump existing images")
@@ -430,47 +474,46 @@ func runnerMain() {
 	}
 
 	logrus.Printf("TODO: Run tests")
+	// TODO: If docker compose configured
 
-	if err := RunScript("docker-compose", "up", "-d"); err != nil {
+	if err := RunScript(scriptCapturer, "docker-compose", "up", "-d"); err != nil {
 		logrus.Fatalf("Error running docker compose up: %v", err)
 	}
 
 	go func() {
+		composeCapturer := newFileCapturer("compose")
+		defer composeCapturer.Close()
 		logrus.Debugf("Listening for logs")
-		if err := RunScript("docker-compose", "logs"); err != nil {
+		if err := RunScript(composeCapturer, "docker-compose", "logs"); err != nil {
 			logrus.Fatalf("Error running docker compose logs: %v", err)
 		}
 	}()
 
-	testRunner := exec.Command("./test_runner.sh", "registry")
-	testRunner.Stdout = os.Stdout
-	testRunner.Stderr = os.Stderr
-	if err := testRunner.Start(); err != nil {
-		logrus.Infof("Error starting testprocess: %s", err)
-	} else {
-		if err := testRunner.Wait(); err != nil {
-			logrus.Infof("Testing process failed: %s", err)
-		}
+	if err := RunScript(testCapturer, "./test_runner.sh", "registry"); err != nil {
+		logrus.Fatalf("Error running test script: %v", err)
 	}
 
 	if err := k(); err != nil {
 		logrus.Fatalf("Error killing daemon %v", err)
 	}
+}
 
-	if err := RunScript("cat", "/etc/hosts"); err != nil {
-		logrus.Fatalf("Error running docker images")
+func newFileCapturer(name string) LogCapturer {
+	basename := filepath.Join("/var/log/docker", name)
+	lc, err := NewFileLogCapturer(basename)
+	if err != nil {
+		logrus.Fatalf("Error creating file capturer for %s: %v", basename, err)
 	}
-	if err := RunScript("ifconfig"); err != nil {
-		logrus.Fatalf("Error running docker images")
-	}
+
+	return lc
 }
 
 // RunScript rungs the script command attaching
 // results to stdout and stdout
-func RunScript(script string, args ...string) error {
+func RunScript(lc LogCapturer, script string, args ...string) error {
 	cmd := exec.Command(script, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = lc.Stdout()
+	cmd.Stderr = lc.Stderr()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("could not start script: %s", err)
 	}
@@ -479,7 +522,7 @@ func RunScript(script string, args ...string) error {
 
 // StartDaemon starts a daemon using the provided binary returning
 // a client to the binary, a close function, and error.
-func StartDaemon(binary string) (*dockerclient.Client, func() error, error) {
+func StartDaemon(binary string, lc LogCapturer) (*dockerclient.Client, func() error, error) {
 	// Get Docker version of process
 	previousVersion, err := versionutil.BinaryVersion(binary)
 	if err != nil {
@@ -496,9 +539,8 @@ func StartDaemon(binary string) (*dockerclient.Client, func() error, error) {
 	binaryArgs = append(binaryArgs, "--log-level=debug")
 	binaryArgs = append(binaryArgs, "--storage-driver="+getGraphDriver())
 	cmd := exec.Command(binary, binaryArgs...)
-	// TODO: Capture
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = lc.Stdout()
+	cmd.Stderr = lc.Stderr()
 	if err := cmd.Start(); err != nil {
 		return nil, nil, fmt.Errorf("could not start daemon: %s", err)
 	}
@@ -527,109 +569,169 @@ func StartDaemon(binary string) (*dockerclient.Client, func() error, error) {
 	return client, cmd.Process.Kill, nil
 }
 
-type tag struct {
-	Tag   reference.NamedTagged
-	Image string
+type tagMap map[string][]string
+
+func listDiff(l1, l2 []string) ([]string, []string) {
+	sort.Strings(l1)
+	sort.Strings(l2)
+
+	removed := []string{}
+	added := []string{}
+
+	i1 := 0
+	i2 := 0
+	for i1 < len(l1) && i2 < len(l2) {
+		r := strings.Compare(l1[i1], l2[i2])
+		switch {
+		case r < 0:
+			removed = append(removed, l1[i1])
+			i1++
+		case r > 0:
+			added = append(added, l2[i2])
+			i2++
+		default:
+			i1++
+			i2++
+		}
+	}
+	for i1 < len(l1) {
+		removed = append(removed, l1[i1])
+		i1++
+	}
+	for i2 < len(l2) {
+		added = append(added, l2[i2])
+		i2++
+	}
+
+	return removed, added
 }
 
-func tarCopy(w *tar.Writer, r *tar.Reader) error {
-	for {
-		hdr, err := r.Next()
-		if err == io.EOF {
-			// end of tar archive
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if err := w.WriteHeader(hdr); err != nil {
-			return err
-		}
-		if _, err := io.Copy(w, r); err != nil {
-			return err
-		}
-	}
-}
-
-func addFile(w *tar.Writer, name string, contents []byte) error {
-	// TODO: Create file info
-	fi, err := os.Stat("/etc/hosts")
+func syncImages(client *dockerclient.Client, imageRoot string) error {
+	logrus.Printf("Syncing images from %s", imageRoot)
+	f, err := os.Open(filepath.Join(imageRoot, "images.json"))
 	if err != nil {
-		return err
-	}
-	h, err := tar.FileInfoHeader(fi, "")
-	if err != nil {
-		return err
-	}
-	h.Name = name
-	h.Size = int64(len(contents))
-	if err := w.WriteHeader(h); err != nil {
-		return err
-	}
-	if _, err := w.Write(contents); err != nil {
-		return err
-	}
-	return nil
-}
-
-func copyImageTarWithTagMap(source io.Reader, target string, tags []tag) error {
-	f, err := os.Create(target)
-	if err != nil {
-		return err
+		return fmt.Errorf("error opening image json file: %v", err)
 	}
 	defer f.Close()
 
-	tw := tar.NewWriter(f)
-	tr := tar.NewReader(source)
+	var m tagMap
+	if err := json.NewDecoder(f).Decode(&m); err != nil {
+		return fmt.Errorf("error decoding images json: %v", err)
+	}
 
-	layers := map[string]struct{}{}
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			// end of tar archive
-			break
-		}
-		logrus.Debugf("Copying file %q", hdr.Name)
-		if filename := filepath.Base(hdr.Name); len(filename) >= 64 {
-			layers[filename] = struct{}{}
-		}
-		if err != nil {
-			return err
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
-		if _, err := io.Copy(tw, tr); err != nil {
-			return err
+	allTags := map[string]struct{}{}
+	neededImages := map[string]struct{}{}
+	for imageID, tags := range m {
+		neededImages[imageID] = struct{}{}
+		for _, t := range tags {
+			allTags[t] = struct{}{}
 		}
 	}
 
-	repositories := map[string]map[string]string{}
-	for _, t := range tags {
-		if _, ok := layers[t.Image]; !ok {
-			return fmt.Errorf("missing layer %s", t.Image)
-		}
-		m, ok := repositories[t.Tag.Name()]
+	images, err := client.ListImages(dockerclient.ListImagesOptions{})
+	if err != nil {
+		return fmt.Errorf("error listing images: %v", err)
+	}
+
+	for _, img := range images {
+		expectedTags, ok := m[img.ID]
 		if ok {
-			m[t.Tag.Tag()] = t.Image
+			delete(neededImages, img.ID)
+
+			repoTags := filterRepoTags(img.RepoTags)
+			logrus.Printf("Tags for %s: %#v", img.ID, repoTags)
+
+			// Sync tags for image ID
+			removedTags, addedTags := listDiff(repoTags, expectedTags)
+			for _, t := range addedTags {
+				if err := tagImage(client, img.ID, t); err != nil {
+					return err
+				}
+			}
+			for _, t := range removedTags {
+				// Check if this image tag conflicts with an expected
+				// tag, in which case force tag will update
+				if _, ok := allTags[t]; !ok {
+					logrus.Debugf("Removing tag %s", t)
+					if err := client.RemoveImage(t); err != nil {
+						return fmt.Errorf("error removing tag %s: %v", t, err)
+					}
+				}
+			}
 		} else {
-			repositories[t.Tag.Name()] = map[string]string{
-				t.Tag.Tag(): t.Image,
+			removeOptions := dockerclient.RemoveImageOptions{
+				Force: true,
+			}
+			if err := client.RemoveImageExtended(img.ID, removeOptions); err != nil {
+				return fmt.Errorf("error moving image %s: %v", img.ID, err)
+			}
+		}
+
+	}
+
+	for imageID := range neededImages {
+		tags, ok := m[imageID]
+		if !ok {
+			return fmt.Errorf("missing image %s in tag map", imageID)
+		}
+		_, err := client.InspectImage(imageID)
+		if err != nil {
+			tf, err := os.Open(filepath.Join(imageRoot, imageID+".tar"))
+			if err != nil {
+				return fmt.Errorf("error opening image tar %s: %v", imageID, err)
+			}
+			defer tf.Close()
+			loadOptions := dockerclient.LoadImageOptions{
+				InputStream: tf,
+			}
+			if err := client.LoadImage(loadOptions); err != nil {
+				return fmt.Errorf("error loading image %s: %v", imageID, err)
+			}
+		}
+		for _, t := range tags {
+			if err := tagImage(client, imageID, t); err != nil {
+				return err
 			}
 		}
 	}
 
-	c, err := json.Marshal(repositories)
+	return nil
+}
+
+func filterRepoTags(tags []string) []string {
+	filtered := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if tag != "<none>" && tag != "<none>:<none>" {
+			filtered = append(filtered, tag)
+		}
+	}
+	return filtered
+}
+
+func tagImage(client *dockerclient.Client, img, tag string) error {
+	ref, err := reference.Parse(tag)
 	if err != nil {
-		return err
+		return fmt.Errorf("invalid tag %s: %v", tag, err)
+	}
+	namedTagged, ok := ref.(reference.NamedTagged)
+	if !ok {
+		return fmt.Errorf("expecting named tagged reference: %s", tag)
+	}
+	tagOptions := dockerclient.TagImageOptions{
+		Repo:  namedTagged.Name(),
+		Tag:   namedTagged.Tag(),
+		Force: true,
+	}
+	if err := client.TagImage(img, tagOptions); err != nil {
+		return fmt.Errorf("error tagging image %s as %s: %v", img, tag, err)
 	}
 
-	logrus.Debugf("Writing repositories with %s", string(c))
-	if err := addFile(tw, "repositories", c); err != nil {
-		return err
-	}
+	return nil
+}
 
-	return tw.Close()
+type tag struct {
+	Tag   reference.NamedTagged
+	Image string
 }
 
 type ImageCache struct {
@@ -777,37 +879,23 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 
 	fmt.Fprintf(df, "FROM %s\n", conf.Base)
 
-	// TODO: Check if has tar of images in cache (sort images and hash)
-	// TODO: Create tar of images, save in cache
+	imagesDir := filepath.Join(td, "images")
+	if err := os.Mkdir(imagesDir, 0755); err != nil {
+		return "", fmt.Errorf("unable to make images directory: %v", err)
+	}
 
-	r, w := io.Pipe()
-	errC := make(chan error)
-	go func() {
-		err := copyImageTarWithTagMap(r, filepath.Join(td, "images.tar"), tags)
-		if err != nil {
-			logrus.Error("Error copying image with tag map: %v", err)
-			r.CloseWithError(err)
+	for _, img := range images {
+		if err := saveImage(client, filepath.Join(imagesDir, img+".tar"), img); err != nil {
+			return "", fmt.Errorf("error saving image %s: %v", img, err)
 		}
-		errC <- err
-		close(errC)
 
-	}()
+	}
 
-	// TODO: Save one images at a time, save by ID.tar
-	if err := saveImages(client, w, images); err != nil {
-		w.CloseWithError(err)
-		logrus.Fatalf("Error saving images: %v", err)
+	if err := saveTagMap(filepath.Join(imagesDir, "images.json"), tags); err != nil {
+		return "", fmt.Errorf("error saving tag map: %v", err)
 	}
-	// TODO: Write out file with list of expected images (tag and ID)
-	//, if not exist load
-	// TODO: Remove any
-	if err := w.Close(); err != nil {
-		logrus.Fatalf("Error closing pipe: %v", err)
-	}
-	if err := <-errC; err != nil {
-		logrus.Fatalf("Error copying to tag map: %v", err)
-	}
-	fmt.Fprintln(df, "COPY ./images.tar /images.tar")
+
+	fmt.Fprintln(df, "COPY ./images /images")
 
 	// Add Docker Binaries (docker test specific)
 	c.BuildCache.InstallVersion(conf.DockerVersion, filepath.Join(td, "docker"))
