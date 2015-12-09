@@ -21,18 +21,6 @@ function setup() {
 	[ "$status" -eq 0 ]
 }
 
-@test "Test malevolent bad signature change" {
-	# Only skip after 1.8.3
-	skip "Bad signature no longer enforced"
-	docker tag -f $base:latest $host/$base/badsignature:latest
-	run docker push $host/$base/badsignature:latest
-	[ "$status" -eq 0 ]
-	has_digest "$output"
-
-	run docker pull $host/$base/badsignature:latest
-	[ "$status" -ne 0 ]
-}
-
 @test "Test malevolent image name change" {
 	imagename="$host/$base/rename"
 	image="$imagename:lastest"
