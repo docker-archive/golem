@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,8 +22,12 @@ import (
 	"github.com/docker/distribution/digest"
 	"github.com/docker/distribution/reference"
 	dockerclient "github.com/fsouza/go-dockerclient"
-	"github.com/jlhawn/dockramp/build"
 	"github.com/termie/go-shutil"
+)
+
+const (
+	TarLib      = false
+	HashVersion = "1"
 )
 
 func main() {
@@ -115,7 +118,7 @@ func main() {
 
 	v, err := client.Version()
 	if err != nil {
-		logrus.Fatal("Error getting version")
+		logrus.Fatalf("Error getting version: %v", err)
 	}
 	serverVersion, err := versionutil.ParseVersion(v.Get("Version"))
 	if err != nil {
@@ -153,7 +156,7 @@ func main() {
 	}
 	baseImage, err := BuildBaseImage(client, conf, c)
 	if err != nil {
-		logrus.Fatalf("Unable to create tempdir: %v", err)
+		logrus.Fatalf("failure building base image: %v", err)
 	}
 
 	// Create temp build directory
@@ -202,15 +205,52 @@ func main() {
 	// TODO: Start for each test, or setup use libcompose
 
 	// Start test container
-	hc := &dockerclient.HostConfig{
-		Privileged: true,
-	}
-	env := []string{}
-	if storageDriver := os.Getenv("DOCKER_GRAPHDRIVER"); storageDriver != "" {
-		env = append(env, "DOCKER_GRAPHDRIVER="+storageDriver)
+	// TODO: Derive these values from config
+	nocache := false
+	contName := "golem-test-1"
+	volumeName := contName + "-graph"
+	cont, err := client.InspectContainer(contName)
+	if err == nil {
+		removeOptions := dockerclient.RemoveContainerOptions{
+			ID:            cont.ID,
+			RemoveVolumes: true,
+		}
+		if err := client.RemoveContainer(removeOptions); err != nil {
+			logrus.Fatalf("Error removing existing container %s: %v", contName, err)
+		}
 	}
 
+	vol, err := client.InspectVolume(volumeName)
+	if err == nil {
+		if nocache {
+			if err := client.RemoveVolume(vol.Name); err != nil {
+				logrus.Fatalf("Error removing volume %s: %v", vol.Name, err)
+			}
+			vol = nil
+		}
+	}
+
+	if vol == nil {
+		createOptions := dockerclient.CreateVolumeOptions{
+			Name:   volumeName,
+			Driver: "local",
+		}
+		vol, err = client.CreateVolume(createOptions)
+		if err != nil {
+			logrus.Fatalf("Error creating volume: %v", err)
+		}
+	}
+
+	// TODO: Defer container and volume cleanup
+
+	logrus.Debugf("Mounting %s to %s", vol.Mountpoint, "/var/lib/docker")
+	hc := &dockerclient.HostConfig{
+		Binds:      []string{fmt.Sprintf("%s:/var/lib/docker", vol.Mountpoint)},
+		Privileged: true,
+	}
+	env := []string{"DOCKER_GRAPHDRIVER=" + getGraphDriver()}
 	cc := dockerclient.CreateContainerOptions{
+		Name: contName,
 		Config: &dockerclient.Config{
 			Image:      "golemrunner:latest",
 			Cmd:        []string{"/usr/bin/golem_runner"},
@@ -241,6 +281,16 @@ func main() {
 		logrus.Fatalf("Error attaching to container: %v", err)
 	}
 
+}
+
+func getGraphDriver() string {
+	d := os.Getenv("DOCKER_GRAPHDRIVER")
+	switch d {
+	case "":
+		return "overlay"
+	default:
+		return d
+	}
 }
 
 func ensureTagged(image string) reference.NamedTagged {
@@ -313,35 +363,45 @@ func runnerMain() {
 
 	// TODO: Parse runner options
 	flag.Parse()
+
+	// Check if empty
+	info, err := ioutil.ReadDir("/var/lib/docker")
+	if err != nil {
+		logrus.Fatalf("Error reading /var/lib/docker: %v", err)
+	}
+
+	// TODO: Check whether or not this is expected to be clean
+	if len(info) == 0 {
+		logrus.Printf("Loading docker images")
+		pc, pk, err := StartDaemon("/usr/bin/docker-load")
+		if err != nil {
+			logrus.Fatalf("Error starting daemon: %s", err)
+		}
+
+		logrus.Printf("Loading images at /images.tar")
+		ti, err := os.Open("/images.tar")
+		if err != nil {
+			logrus.Fatalf("Unable to open /images.tar: %v", err)
+		}
+		defer ti.Close()
+		loadOptions := dockerclient.LoadImageOptions{
+			InputStream: ti,
+		}
+		if err := pc.LoadImage(loadOptions); err != nil {
+			logrus.Fatalf("Unable to load images: %v", err)
+		}
+
+		if err := RunScript("/usr/bin/docker-load", "images"); err != nil {
+			logrus.Fatalf("Error running docker images")
+		}
+
+		logrus.Printf("Stopping daemon")
+		if err := pk(); err != nil {
+			logrus.Fatalf("Error killing daemon %v", err)
+		}
+	}
+
 	// TODO: Load options from test directory
-
-	pc, pk, err := StartDaemon("/usr/bin/docker-previous")
-	if err != nil {
-		logrus.Fatalf("Error starting daemon: %s", err)
-	}
-
-	logrus.Printf("Loading images at /images.tar")
-	ti, err := os.Open("/images.tar")
-	if err != nil {
-		logrus.Fatalf("Unable to open /images.tar: %v", err)
-	}
-	defer ti.Close()
-	loadOptions := dockerclient.LoadImageOptions{
-		InputStream: ti,
-	}
-	if err := pc.LoadImage(loadOptions); err != nil {
-		logrus.Fatalf("Unable to load images: %v", err)
-	}
-
-	if err := RunScript("/usr/bin/docker-previous", "images"); err != nil {
-		logrus.Fatalf("Error running docker images")
-	}
-
-	logrus.Printf("Stopping daemon")
-	if err := pk(); err != nil {
-		logrus.Fatalf("Error killing daemon %v", err)
-	}
-
 	if err := RunScript("ls", "-l", "/runner"); err != nil {
 		logrus.Fatalf("Error running docker images")
 	}
@@ -355,12 +415,32 @@ func runnerMain() {
 	}
 
 	logrus.Printf("Starting daemon")
-	_, k, err := StartDaemon("/usr/bin/docker")
+	client, k, err := StartDaemon("/usr/bin/docker")
 	if err != nil {
 		logrus.Fatalf("Error starting daemon: %s", err)
 	}
 
+	logrus.Printf("Dump existing images")
+	images, err := client.ListImages(dockerclient.ListImagesOptions{})
+	if err != nil {
+		logrus.Fatalf("Unable to list images: %v", err)
+	}
+	for _, image := range images {
+		logrus.Printf("Found image %s: %#v", image.ID, image.RepoTags)
+	}
+
 	logrus.Printf("TODO: Run tests")
+
+	if err := RunScript("docker-compose", "up", "-d"); err != nil {
+		logrus.Fatalf("Error running docker compose up: %v", err)
+	}
+
+	go func() {
+		logrus.Debugf("Listening for logs")
+		if err := RunScript("docker-compose", "logs"); err != nil {
+			logrus.Fatalf("Error running docker compose logs: %v", err)
+		}
+	}()
 
 	testRunner := exec.Command("./test_runner.sh", "registry")
 	testRunner.Stdout = os.Stdout
@@ -375,6 +455,13 @@ func runnerMain() {
 
 	if err := k(); err != nil {
 		logrus.Fatalf("Error killing daemon %v", err)
+	}
+
+	if err := RunScript("cat", "/etc/hosts"); err != nil {
+		logrus.Fatalf("Error running docker images")
+	}
+	if err := RunScript("ifconfig"); err != nil {
+		logrus.Fatalf("Error running docker images")
 	}
 }
 
@@ -407,13 +494,11 @@ func StartDaemon(binary string) (*dockerclient.Client, func() error, error) {
 		binaryArgs = append(binaryArgs, "daemon")
 	}
 	binaryArgs = append(binaryArgs, "--log-level=debug")
-	if storageDriver := os.Getenv("DOCKER_GRAPHDRIVER"); storageDriver != "" {
-		binaryArgs = append(binaryArgs, "--storage-driver="+storageDriver)
-	}
-	cmd := exec.Command("/usr/bin/docker-previous", binaryArgs...)
+	binaryArgs = append(binaryArgs, "--storage-driver="+getGraphDriver())
+	cmd := exec.Command(binary, binaryArgs...)
 	// TODO: Capture
-	//cmd.Stdout = os.Stdout
-	//cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return nil, nil, fmt.Errorf("could not start daemon: %s", err)
 	}
@@ -585,6 +670,7 @@ func (ic *ImageCache) SaveImage(dgst digest.Digest, id string) error {
 	if _, err := fmt.Fprintf(f, "%s", id); err != nil {
 		return err
 	}
+	logrus.Debugf("Saved %s->%s at %s", dgst, id, fp)
 	return nil
 }
 
@@ -643,6 +729,11 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 	}
 
 	dgstr := digest.Canonical.New()
+	// Add runner options
+	fmt.Fprintf(dgstr.Hash(), "Version: %s\n", HashVersion)
+	fmt.Fprintln(dgstr.Hash())
+	fmt.Fprintln(dgstr.Hash())
+
 	// TODO: Incorporate image id
 	fmt.Fprintf(dgstr.Hash(), "%s\n\n", conf.Base.String())
 
@@ -659,13 +750,16 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 
 	id, err := c.ImageCache.GetImage(imageHash)
 	if err == nil {
-		return id, nil
+		logrus.Debugf("Found image in cache for %s: %s", imageHash, id)
+		info, err := client.InspectImage(id)
+		if err == nil {
+			logrus.Debugf("Cached image found locally %s", info.ID)
+			return id, nil
+		}
+		logrus.Errorf("Unable to find cached image %s: %v", id, err)
+	} else {
+		logrus.Debugf("Building image, could not find in cache: %v", err)
 	}
-	logrus.Debugf("Building image, could not find in cache: %v", err)
-
-	// Calculate configuration hash
-	// Check if in index
-	// Check if image exists
 
 	// Create temp build directory
 	td, err := ioutil.TempDir("", "golem-")
@@ -698,10 +792,15 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 		close(errC)
 
 	}()
+
+	// TODO: Save one images at a time, save by ID.tar
 	if err := saveImages(client, w, images); err != nil {
 		w.CloseWithError(err)
 		logrus.Fatalf("Error saving images: %v", err)
 	}
+	// TODO: Write out file with list of expected images (tag and ID)
+	//, if not exist load
+	// TODO: Remove any
 	if err := w.Close(); err != nil {
 		logrus.Fatalf("Error closing pipe: %v", err)
 	}
@@ -712,9 +811,9 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 
 	// Add Docker Binaries (docker test specific)
 	c.BuildCache.InstallVersion(conf.DockerVersion, filepath.Join(td, "docker"))
-	c.BuildCache.InstallVersion(conf.DockerLoadVersion, filepath.Join(td, "docker-previous"))
+	c.BuildCache.InstallVersion(conf.DockerLoadVersion, filepath.Join(td, "docker-load"))
 	fmt.Fprintln(df, "COPY ./docker /usr/bin/docker")
-	fmt.Fprintln(df, "COPY ./docker-previous /usr/bin/docker-previous")
+	fmt.Fprintln(df, "COPY ./docker-load /usr/bin/docker-load")
 	// TODO: Handle init files
 
 	// TODO: Install executable

@@ -1,10 +1,6 @@
 package main
 
 import (
-	"io"
-	"net/http"
-	"path/filepath"
-
 	"github.com/dmcgowan/golem/clientutil"
 	dockerclient "github.com/fsouza/go-dockerclient"
 	"github.com/jlhawn/dockramp/build"
@@ -15,28 +11,25 @@ type DockerClient struct {
 	options *clientutil.ClientOptions
 }
 
-func NewDockerClient(co *clientutil.ClientOptions) (DockerClient, error) {
-	client, err := dockerclient.NewClient(co.DaemonURL())
-	if err != nil {
-		return DockerClient{}, err
+func NewDockerClient(co *clientutil.ClientOptions) (client DockerClient, err error) {
+	tlsConfig := co.TLSConfig()
+	var dc *dockerclient.Client
+	if tlsConfig != nil {
+		dc, err = dockerclient.NewTLSClient(co.DaemonURL(), co.ClientCertFile(), co.ClientKeyFile(), co.CACertFile())
+		if err != nil {
+			return
+		}
+	} else {
+		dc, err = dockerclient.NewClient(co.DaemonURL())
+		if err != nil {
+			return
+		}
 	}
-	if tlsConfig := co.TLSConfig(); tlsConfig != nil {
-		client.TLSConfig = tlsConfig
-		client.HTTPClient.Transport.(*http.Transport).TLSClientConfig = tlsConfig
-	}
+
 	return DockerClient{
-		Client:  client,
+		Client:  dc,
 		options: co,
 	}, nil
-}
-
-func (dc DockerClient) createRequest(method, path string, body io.Reader) (*http.Request, error) {
-	fullPath := filepath.Join(dc.options.DaemonURL(), path)
-	return http.NewRequest(method, fullPath, body)
-}
-
-func (dc DockerClient) do(req *http.Request) (*http.Response, error) {
-	return dc.Client.HTTPClient.Do(req)
 }
 
 func (dc DockerClient) NewBuilder(contextDirectory, dockerfilePath, repoTag string) (*build.Builder, error) {
