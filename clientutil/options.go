@@ -37,7 +37,7 @@ func NewClientOptions() *ClientOptions {
 	co := &ClientOptions{}
 	flag.StringVar(&co.daemonURL, "H", "", "Docker daemon socket/host to connect to")
 	flag.BoolVar(&co.useTLS, "-tls", false, "Use TLS client cert/key (implied by --tlsverify)")
-	flag.BoolVar(&co.verifyTLS, "-tlsverify", true, "Use TLS and verify the remote server certificate")
+	flag.BoolVar(&co.verifyTLS, "-tlsverify", false, "Use TLS and verify the remote server certificate")
 	flag.StringVar(&co.caCertFile, "-cacert", "", "Trust certs signed only by this CA")
 	flag.StringVar(&co.clientCertFile, "-cert", "", "TLS client certificate")
 	flag.StringVar(&co.clientKeyFile, "-key", "", "TLS client key")
@@ -143,4 +143,19 @@ func (co *ClientOptions) DaemonURL() string {
 func (co *ClientOptions) TLSConfig() *tls.Config {
 	co.parse()
 	return co.tlsConfig
+}
+
+func (co *ClientOptions) ClientCertFile() string {
+	co.parse()
+	return co.clientCertFile
+}
+
+func (co *ClientOptions) ClientKeyFile() string {
+	co.parse()
+	return co.clientKeyFile
+}
+
+func (co *ClientOptions) CACertFile() string {
+	co.parse()
+	return co.caCertFile
 }
