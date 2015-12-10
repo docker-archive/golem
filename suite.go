@@ -59,6 +59,15 @@ func (sr *SuiteRunner) Setup() error {
 		if len(info) != 0 {
 			// TODO: Clean if configuration is set
 			logrus.Debugf("/var/lib/docker is not clean")
+
+			loadVersion, err := versionutil.BinaryVersion("/usr/bin/docker-load")
+			if err != nil {
+				return err
+			}
+
+			if err := cleanDockerGraph("/var/lib/docker", loadVersion); err != nil {
+				return err
+			}
 		}
 
 		// Load tag map
@@ -381,4 +390,118 @@ func tagImage(client *dockerclient.Client, img, tag string) error {
 	}
 
 	return nil
+}
+
+func removeIfExists(path string) error {
+	_, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	logrus.Debugf("Removing %s", path)
+	return os.Remove(path)
+}
+
+func cleanDockerGraph(graphDir string, v versionutil.Version) error {
+	logrus.Debugf("Cleaning for version %s", v)
+	// Handle migration files
+	migratedVersion := versionutil.StaticVersion(1, 10, 0)
+	migratedVersion.Tag = "dev"
+	if v.LessThan(migratedVersion) {
+
+		if err := removeIfExists(filepath.Join(graphDir, ".migration-v1-images.json")); err != nil {
+			return err
+		}
+		if err := removeIfExists(filepath.Join(graphDir, ".migration-v1-tags")); err != nil {
+			return err
+		}
+
+		root := filepath.Join(graphDir, "graph")
+		migrationPurger := func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() {
+				if strings.HasPrefix(filepath.Base(path), ".migrat") {
+					logrus.Debugf("Removing migration file %s", path)
+					if err := os.Remove(filepath.Join(root, path)); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		}
+		if err := filepath.Walk(root, migrationPurger); err != nil {
+			return err
+		}
+
+		// Remove all containers
+		infos, err := ioutil.ReadDir(filepath.Join(graphDir, "containers"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		drivers, err := getAllGraphDrivers(graphDir)
+		if err != nil {
+			return err
+		}
+		for _, info := range infos {
+			container := info.Name()
+			for _, graphDriver := range drivers {
+				if err := removeLayerGraphContent(container, "mount-id", graphDriver, graphDir); err != nil && !os.IsNotExist(err) {
+					return err
+				}
+				if err := removeLayerGraphContent(container, "init-id", graphDriver, graphDir); err != nil && !os.IsNotExist(err) {
+					return err
+				}
+			}
+			if err := os.RemoveAll(filepath.Join(graphDir, "containers", container)); err != nil {
+				return err
+			}
+		}
+		if err := os.RemoveAll(filepath.Join(graphDir, "image")); err != nil {
+			return err
+		}
+		if err := removeIfExists(filepath.Join(graphDir, "linkgraph.db")); err != nil {
+			return err
+		}
+
+		// TODO: Remove everything in graph driver directory which is not in graph
+	}
+
+	return nil
+}
+
+func removeLayerGraphContent(layerID, filename, graphDriver, root string) error {
+	layerRoot := filepath.Join(root, "image", graphDriver, "layerdb", "mounts", layerID)
+	graphIDBytes, err := ioutil.ReadFile(filepath.Join(layerRoot, filename))
+	if err != nil {
+		return err
+	}
+	removeDir := filepath.Join(root, graphDriver, strings.TrimSpace(string(graphIDBytes)))
+	logrus.Debugf("Removing graph directory %s", removeDir)
+	if err := os.RemoveAll(removeDir); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func getAllGraphDrivers(graphDir string) ([]string, error) {
+	infos, err := ioutil.ReadDir(graphDir)
+	if err != nil {
+		return nil, err
+	}
+	drivers := []string{}
+	for _, info := range infos {
+		name := info.Name()
+		if strings.HasPrefix(name, "repositories-") {
+			drivers = append(drivers, name[13:])
+		}
+	}
+	return drivers, nil
 }

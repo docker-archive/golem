@@ -24,6 +24,7 @@ func main() {
 		distributionImage   string
 		legacyRegistryImage string
 		dockerVersion       string
+		dockerBinary        string
 		loadDockerVersion   string
 		cacheDir            string
 		buildCache          string
@@ -35,6 +36,7 @@ func main() {
 	flag.StringVar(&distributionImage, "-registry", "registry:2.1.1", "Distribution image")
 	flag.StringVar(&legacyRegistryImage, "-legacy-registry", "registry:0.9.1", "Registry V1 image")
 	flag.StringVar(&dockerVersion, "dv", "1.9.0", "Docker version to test")
+	flag.StringVar(&dockerBinary, "db", "", "Docker binary to test")
 	flag.StringVar(&loadDockerVersion, "load-version", "1.8.3", "Previous Docker version (for upgrade from testing)")
 	flag.StringVar(&cacheDir, "c", "", "Cache directory")
 	flag.StringVar(&buildCache, "bc", "", "Build cache location, if outside of default cache directory")
@@ -60,15 +62,6 @@ func main() {
 		logrus.Fatalf("Error getting path to executable: %s", err)
 	}
 
-	dv, err := versionutil.ParseVersion(dockerVersion)
-	if err != nil {
-		logrus.Fatalf("Invalid docker version %q: %v", dockerVersion, err)
-	}
-	pv, err := versionutil.ParseVersion(loadDockerVersion)
-	if err != nil {
-		logrus.Fatalf("Invalid docker version %q: %v", loadDockerVersion, err)
-	}
-
 	if cacheDir == "" {
 		td, err := ioutil.TempDir("", "build-cache-")
 		if err != nil {
@@ -89,6 +82,29 @@ func main() {
 			root: filepath.Join(cacheDir, "images"),
 		},
 		BuildCache: buildutil.NewFSBuildCache(buildCache),
+	}
+
+	pv, err := versionutil.ParseVersion(loadDockerVersion)
+	if err != nil {
+		logrus.Fatalf("Invalid docker version %q: %v", loadDockerVersion, err)
+	}
+	// TODO: If docker binary, get version, put in cache, set dockerVersion
+	var dv versionutil.Version
+	if dockerBinary != "" {
+		v, err := versionutil.BinaryVersion(dockerBinary)
+		if err != nil {
+			logrus.Fatalf("Error getting binary version of %s: %v", dockerBinary, err)
+		}
+		logrus.Debugf("Using local binary with version %s", v.String())
+		if err := c.BuildCache.PutVersion(v, dockerBinary); err != nil {
+			logrus.Fatalf("Error putting %s in cache as %s: %v", dockerBinary, v, err)
+		}
+		dv = v
+	} else {
+		dv, err = versionutil.ParseVersion(dockerVersion)
+		if err != nil {
+			logrus.Fatalf("Invalid docker version %q: %v", dockerVersion, err)
+		}
 	}
 
 	client, err := NewDockerClient(co)

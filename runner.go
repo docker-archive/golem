@@ -47,9 +47,6 @@ type SuiteConfiguration struct {
 type RunnerConfiguration struct {
 	Suites []SuiteConfiguration
 
-	DefaultDockerLoadVersion versionutil.Version
-	DefaultDockerVersion     versionutil.Version
-
 	ExecutableName string
 	ExecutablePath string
 
@@ -436,8 +433,8 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 	}
 	fmt.Fprintln(dgstr.Hash())
 
-	fmt.Fprintln(dgstr.Hash(), conf.DockerLoadVersion)
-	fmt.Fprintln(dgstr.Hash(), conf.DockerVersion)
+	fmt.Fprintln(dgstr.Hash(), conf.DockerLoadVersion.String())
+	fmt.Fprintln(dgstr.Hash(), conf.DockerVersion.String())
 
 	imageHash := dgstr.Digest()
 
