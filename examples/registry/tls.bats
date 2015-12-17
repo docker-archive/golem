@@ -3,7 +3,7 @@
 # Registry host name, should be set to non-localhost address and match
 # DNS name in nginx/ssl certificates and what is installed in /etc/docker/cert.d
 
-load ../helpers
+load helpers
 
 hostname=${TEST_REGISTRY:-"localregistry"}
 

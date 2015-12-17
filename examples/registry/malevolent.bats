@@ -2,7 +2,7 @@
 
 # This tests various expected error scenarios when pulling bad content
 
-load ../helpers
+load helpers
 
 host="localregistry:6666"
 base="hello-world"

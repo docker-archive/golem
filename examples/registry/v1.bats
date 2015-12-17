@@ -2,7 +2,7 @@
 
 # Tests pushing and pulling with the v1 registry
 
-load ../helpers
+load helpers
 
 hostname=${TEST_REGISTRY:-"localregistry"}
 host="$hostname:5011"
