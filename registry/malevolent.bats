@@ -8,7 +8,10 @@ host="localregistry:6666"
 base="hello-world"
 
 function setup() {
-	docker pull $base:latest
+	if [ "$TEST_SKIP_PULL" == "" ]; then
+		docker pull $base:latest
+	fi
+
 }
 
 @test "Test malevolent proxy pass through" {
@@ -18,6 +21,7 @@ function setup() {
 	has_digest "$output"
 
 	run docker pull $host/$base/nochange:latest
+	echo "$output"
 	[ "$status" -eq 0 ]
 }
 
@@ -31,6 +35,7 @@ function setup() {
 
 	# Pull attempt should fail to verify manifest digest
 	run docker pull "$imagename@$digest"
+	echo "$output"
 	[ "$status" -ne 0 ]
 }
 

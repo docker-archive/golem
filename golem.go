@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/dmcgowan/golem/buildutil"
@@ -106,14 +107,48 @@ func main() {
 	}
 }
 
+type pretestScripts [][]string
+
+func (p *pretestScripts) String() string {
+	return ""
+}
+
+func (p *pretestScripts) Set(value string) error {
+	args := strings.Split(value, " ")
+	*p = append(*p, args)
+	return nil
+}
+
 func runnerMain() {
+	var (
+		command string
+		dind    bool
+		clean   bool
+		pretest = pretestScripts{}
+	)
+
 	// TODO: Parse runner options
+	flag.StringVar(&command, "command", "bats", "Command to run")
+	flag.BoolVar(&dind, "docker", false, "Whether to run docker")
+	flag.BoolVar(&clean, "clean", false, "Whether to ensure /var/lib/docker is empty")
+	flag.Var(&pretest, "prescript", "Scripts to run before tests")
+
 	flag.Parse()
 
 	// TODO: Allow quiet and verbose mode
 	logrus.SetLevel(logrus.DebugLevel)
 
 	logrus.Debugf("Runner!")
+
+	// Check if has compose file
+	composeFile := "/runner/docker-compose.yml"
+	var composeCapturer LogCapturer
+	if _, err := os.Stat(composeFile); err == nil {
+		composeCapturer = newFileCapturer("compose")
+		defer composeCapturer.Close()
+	} else {
+		logrus.Debugf("No compose file found at %s", composeFile)
+	}
 
 	scriptCapturer := newFileCapturer("scripts")
 	defer scriptCapturer.Close()
@@ -123,33 +158,36 @@ func runnerMain() {
 	defer daemonCapturer.Close()
 	testCapturer := NewConsoleLogCapturer()
 	defer testCapturer.Close()
-	composeCapturer := newFileCapturer("compose")
-	defer composeCapturer.Close()
 
 	suiteConfig := SuiteRunnerConfiguration{
-		DockerInDocker:        true,
-		CleanDockerGraph:      false,
 		DockerLoadLogCapturer: loadCapturer,
 		DockerLogCapturer:     daemonCapturer,
-		SetupScripts: [][]string{
-			{"/bin/sh", "/runner/install_certs.sh", "localregistry"},
-		},
-		SetupLogCapturer: scriptCapturer,
-		ComposeFile:      "/runner/docker-compose.yml",
-		ComposeCapturer:  composeCapturer,
+		SetupLogCapturer:      scriptCapturer,
+		TestCapturer:          testCapturer,
 
-		TestCapturer: testCapturer,
-		TestCommand:  "bats",
-		TestArgs:     []string{"-t", "registry"},
-		TestEnv: []string{
-			"TEST_REPO=hello-world",
-			"TEST_TAG=latest",
-			"TEST_USER=testuser",
-			"TEST_PASSWORD=passpassword",
-			"TEST_REGISTRY=localregistry",
-			"TEST_SKIP_PULL=true",
-		},
+		CleanDockerGraph: clean,
+		SetupScripts:     [][]string(pretest),
+		DockerInDocker:   dind,
+		TestEnv:          os.Environ(),
 	}
+
+	if composeCapturer != nil {
+		suiteConfig.ComposeCapturer = composeCapturer
+		suiteConfig.ComposeFile = composeFile
+
+	}
+	args := []string{}
+	switch command {
+	case "bats":
+		args = append(args, "-t")
+	case "go":
+	default:
+		logrus.Fatalf("Unsupported command %s", command)
+	}
+	args = append(args, flag.Args()...)
+
+	suiteConfig.TestCommand = command
+	suiteConfig.TestArgs = args
 
 	runner := NewSuiteRunner(suiteConfig)
 

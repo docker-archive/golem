@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/Sirupsen/logrus"
@@ -415,10 +416,17 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 	// TODO: Incorporate image id
 	fmt.Fprintf(dgstr.Hash(), "%s\n\n", conf.Base.String())
 
-	// TODO: Sort tags, write
+	imageTags := map[string]string{}
+	allTags := []string{}
 	for _, t := range tags {
-		fmt.Fprintf(dgstr.Hash(), "%s %s\n", t.Tag.String(), t.Image)
+		imageTags[t.Tag.String()] = t.Image
+		allTags = append(allTags, t.Tag.String())
 	}
+	sort.Strings(allTags)
+	for _, t := range allTags {
+		fmt.Fprintf(dgstr.Hash(), "%s %s\n", t, imageTags[t])
+	}
+
 	fmt.Fprintln(dgstr.Hash())
 
 	fmt.Fprintln(dgstr.Hash(), conf.DockerLoadVersion.String())
@@ -474,8 +482,12 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 	fmt.Fprintln(df, "COPY ./images /images")
 
 	// Add Docker Binaries (docker test specific)
-	c.BuildCache.InstallVersion(conf.DockerVersion, filepath.Join(td, "docker"))
-	c.BuildCache.InstallVersion(conf.DockerLoadVersion, filepath.Join(td, "docker-load"))
+	if err := c.BuildCache.InstallVersion(conf.DockerVersion, filepath.Join(td, "docker")); err != nil {
+		return "", fmt.Errorf("error installing docker version %s: %v", conf.DockerVersion, err)
+	}
+	if err := c.BuildCache.InstallVersion(conf.DockerLoadVersion, filepath.Join(td, "docker-load")); err != nil {
+		return "", fmt.Errorf("error installing docker load version %s: %v", conf.DockerLoadVersion, err)
+	}
 	fmt.Fprintln(df, "COPY ./docker /usr/bin/docker")
 	fmt.Fprintln(df, "COPY ./docker-load /usr/bin/docker-load")
 	// TODO: Handle init files

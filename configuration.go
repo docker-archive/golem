@@ -89,23 +89,6 @@ func (v *configurationVersion) Set(value string) error {
 	return nil
 }
 
-type configurationPath string
-
-func (v *configurationPath) String() string {
-	return string(*v)
-}
-
-func (v *configurationPath) Set(value string) error {
-	absConf, err := filepath.Abs(value)
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(absConf); err != nil {
-		return err
-	}
-	return nil
-}
-
 type testSuite struct {
 	name string
 	path string
@@ -140,7 +123,6 @@ func (s suites) Set(value string) error {
 type ConfigurationManager struct {
 	flagResolver  *flagResolver
 	dockerVersion configurationVersion
-	configFile    configurationPath
 	suites        suites
 }
 
@@ -151,20 +133,40 @@ func NewConfigurationManager() *ConfigurationManager {
 
 	// TODO: support extra images
 	flag.Var(&m.dockerVersion, "docker-version", "Docker version to test")
-	flag.Var(&m.configFile, "c", "Configuration file for running tests")
 	flag.Var(m.suites, "s", "Path to test suite to run")
 
 	return m
 }
 
 func (c *ConfigurationManager) RunnerConfiguration(loadDockerVersion versionutil.Version) (RunnerConfiguration, error) {
-	conf := string(c.configFile)
-	if conf == "" && len(c.suites) == 0 {
+	// TODO: eliminate suites and just use arguments
+	var conf string
+	// Get first flag
+	if flag.NArg() == 0 {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return RunnerConfiguration{}, err
 		}
 		conf = filepath.Join(cwd, "golem.conf")
+		logrus.Debugf("No configuration given, trying current directory %s", conf)
+	} else {
+		absPath, err := filepath.Abs(flag.Arg(0))
+		if err != nil {
+			return RunnerConfiguration{}, err
+		}
+
+		info, err := os.Stat(absPath)
+		if err != nil {
+			return RunnerConfiguration{}, err
+		}
+		if info.IsDir() {
+			absPath = filepath.Join(absPath, "golem.conf")
+			if _, err := os.Stat(absPath); err != nil {
+				return RunnerConfiguration{}, err
+
+			}
+		}
+		conf = absPath
 
 	}
 
@@ -189,8 +191,6 @@ func (c *ConfigurationManager) RunnerConfiguration(loadDockerVersion versionutil
 
 	suites := cf.Suites()
 	for _, suite := range suites {
-		// TODO: Create flag Resolver
-		// TODO: Create global default Resolver
 		resolver := MultiResolver(c.flagResolver, suite.Resolver, globalDefault)
 
 		baseConf := BaseImageConfiguration{
@@ -206,12 +206,24 @@ func (c *ConfigurationManager) RunnerConfiguration(loadDockerVersion versionutil
 			Path:           resolver.Path(),
 			BaseImage:      baseConf,
 			DockerInDocker: resolver.Dind(),
-			Instances: []RunConfiguration{
-				{
-					Name: "default",
-				},
-			},
 		}
+
+		// Set runner arguments
+		args := []string{"-command", suite.Command}
+		if resolver.Dind() {
+			args = append(args, "-docker")
+
+		}
+		for _, pretest := range suite.Pretest {
+			args = append(args, "-prescript", pretest)
+		}
+
+		args = append(args, suite.Args...)
+		registrySuite.Instances = append(registrySuite.Instances, RunConfiguration{
+			Name: "default",
+			Env:  suite.Env,
+			Args: args,
+		})
 		runnerConfig.Suites = append(runnerConfig.Suites, registrySuite)
 	}
 
@@ -414,6 +426,10 @@ type ConfigurationSuite struct {
 	Resolver
 
 	// Target information
+	Pretest []string
+	Command string
+	Args    []string
+	Env     []string
 }
 
 type ConfigurationFile struct {
@@ -463,7 +479,12 @@ func (c *ConfigurationFile) addSuiteConfig(path string, config *suiteConfigurati
 
 	c.suites[config.Name] = ConfigurationSuite{
 		Resolver: resolver,
-		// TODO: Add run target information
+
+		// TODO: Add multiple configuration support
+		Pretest: config.Pretest,
+		Command: config.Testrunner,
+		Args:    config.Testargs,
+		Env:     config.Testenv,
 	}
 
 	return nil
@@ -577,6 +598,9 @@ type suiteConfiguration struct {
 
 	// Base is the base image to build the test from
 	Base string `toml:"baseimage"`
+
+	// Pretest is the commands to run before the test starts
+	Pretest []string `toml:"pretest"`
 
 	// Testrunner determines what will be used to run the tests
 	// Supprted test runners ["go", "bats"]
