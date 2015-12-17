@@ -26,13 +26,6 @@ if [ "$DISTRIBUTION_BUILD_DIR" != "" ]; then
 	DISTRIBUTION_IMAGE=""
 fi
 
-NOTARY_IMAGE=${NOTARY_IMAGE:-distribution/notary_notaryserver:0.1.4}
-notaryMount=""
-if [ "$NOTARY_BUILD_DIR" != "" ]; then
-	notaryMount="-v ${NOTARY_BUILD_DIR}:/build/notary"
-	NOTARY_IMAGE=""
-fi
-
 logMount=""
 if [ "$TEST_LOG_DIR" != "" ]; then
 	logMount="-v ${TEST_LOG_DIR}:/var/log"
@@ -50,11 +43,11 @@ if [ "$1" == "-d" ]; then
 	shift
 fi
 
-TESTS=${@:-registry notary}
+TESTS=${@:-registry}
 
 # Start a Docker engine inside a docker container
 ID=$(docker run -d -it --privileged $volumeMount $dockerMount $logMount \
-	$distributionMount $notaryMount \
+	$distributionMount \
 	-v ${TEST_ROOT}:/runner \
 	-w /runner \
 	-e "DOCKER_GRAPHDRIVER=$DOCKER_GRAPHDRIVER" \
@@ -85,15 +78,13 @@ if [ "$DOCKER_VOLUME" == "" ]; then
 	docker pull registry:0.9.1
 
 	load_image docker "$DISTRIBUTION_IMAGE" golem/distribution:latest "$DISTRIBUTION_BUILD_DIR"
-	load_image docker "$NOTARY_IMAGE" golem/notary:latest "$NOTARY_BUILD_DIR" "-f $NOTARY_BUILD_DIR/notary-server-Dockerfile"
 
 	# Transfer images to the inner container.
-	for image in registry:0.9.1 golem/distribution:latest golem/notary:latest runner_nginx; do
+	for image in registry:0.9.1 golem/distribution:latest runner_nginx; do
 		docker save "$image" | docker exec -i "$ID" docker load
 	done
 else
 	load_image "docker exec -i $ID docker" "$DISTRIBUTION_IMAGE" golem/distribution:latest /build/distribution
-	load_image "docker exec -i $ID docker" "$NOTARY_IMAGE" golem/notary:latest /build/notary "-f /build/notary/notary-server-Dockerfile"
 fi
 
 # Run the tests.

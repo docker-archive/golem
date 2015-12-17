@@ -8,12 +8,12 @@ function execute() {
 	eval "$@"
 }
 
-execute time docker-compose build
-
-execute docker-compose up -d
-trap "docker-compose stop &> /dev/null" EXIT
-
-execute docker-compose logs > /var/log/compose.log &
+#execute time docker-compose build
+#
+#execute docker-compose up -d
+#trap "docker-compose stop &> /dev/null" EXIT
+#
+#execute docker-compose logs > /var/log/compose.log &
 
 # Setup test environment
 export TEST_REPO="hello-world"
@@ -23,8 +23,8 @@ export TEST_PASSWORD="passpassword"
 export TEST_REGISTRY="localregistry"
 
 # Pull images used for tests
-docker pull "${TEST_REPO}:${TEST_TAG}"
+#docker pull "${TEST_REPO}:${TEST_TAG}"
 export TEST_SKIP_PULL="true"
 
 # Run the tests.
-execute time bats -p $@
+execute time bats -t $@

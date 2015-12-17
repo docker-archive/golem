@@ -6,6 +6,12 @@ if [ "$hostname" = "" ]; then
 	hostname="localhost"
 fi
 
+if [ "$hostname" != "localhost" ]; then
+	IP=$(ifconfig eth0|grep "inet addr:"| cut -d: -f2 | awk '{ print $1}')
+	echo "$IP $hostname" >> /etc/hosts
+	# TODO: Check if record already exists in /etc/hosts
+fi
+
 install_ca() {
 	mkdir -p $1/$hostname:$2
 	cp ./nginx/ssl/registry-ca+ca.pem $1/$hostname:$2/ca.crt
