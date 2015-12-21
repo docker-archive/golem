@@ -170,13 +170,10 @@ func (c *ConfigurationManager) RunnerConfiguration(loadDockerVersion versionutil
 
 	}
 
-	// Load Global default and update suite list
-	cf, err := ParseConfigurationFile(conf, map[string]string(c.suites))
+	suites, err := ParseSuites(flag.Args())
 	if err != nil {
 		return RunnerConfiguration{}, err
 	}
-
-	// Ensure no duplicated paths or names
 
 	// TODO: Support non-linux by downloading and replacing executable path
 	executablePath, err := osext.Executable()
@@ -189,9 +186,8 @@ func (c *ConfigurationManager) RunnerConfiguration(loadDockerVersion versionutil
 		ExecutablePath: executablePath,
 	}
 
-	suites := cf.Suites()
 	for _, suite := range suites {
-		resolver := MultiResolver(c.flagResolver, suite.Resolver, globalDefault)
+		resolver := MultiResolver(c.flagResolver, suite, globalDefault)
 
 		baseConf := BaseImageConfiguration{
 			Base:              resolver.BaseImage(),
@@ -390,40 +386,15 @@ func (mr multiResolver) CustomImages() []CustomImage {
 	return images
 }
 
-type suiteResolver struct {
-	*suiteConfiguration
+type ConfigurationSuite struct {
+	config suiteConfiguration
+
 	path         string
 	base         reference.NamedTagged
 	images       []reference.NamedTagged
 	customImages []CustomImage
-}
 
-func (sr *suiteResolver) Name() string {
-	return sr.suiteConfiguration.Name
-}
-
-func (sr *suiteResolver) Path() string {
-	return sr.path
-}
-
-func (sr *suiteResolver) BaseImage() reference.NamedTagged {
-	return sr.base
-}
-
-func (sr *suiteResolver) Dind() bool {
-	return sr.suiteConfiguration.Dind
-}
-
-func (sr *suiteResolver) Images() []reference.NamedTagged {
-	return sr.images
-}
-func (sr *suiteResolver) CustomImages() []CustomImage {
-
-	return sr.customImages
-}
-
-type ConfigurationSuite struct {
-	Resolver
+	resolvedName string
 
 	// Target information
 	Pretest []string
@@ -432,21 +403,43 @@ type ConfigurationSuite struct {
 	Env     []string
 }
 
-type ConfigurationFile struct {
-	root   string
-	suites map[string]ConfigurationSuite
+func (cs *ConfigurationSuite) SetName(name string) {
+	cs.resolvedName = name
 }
 
-func (c *ConfigurationFile) addSuiteConfig(path string, config *suiteConfiguration) error {
+func (cs *ConfigurationSuite) Name() string {
+	return cs.resolvedName
+}
+
+func (cs *ConfigurationSuite) Path() string {
+	return cs.path
+}
+
+func (cs *ConfigurationSuite) BaseImage() reference.NamedTagged {
+	return cs.base
+}
+
+func (cs *ConfigurationSuite) Dind() bool {
+	return cs.config.Dind
+}
+
+func (cs *ConfigurationSuite) Images() []reference.NamedTagged {
+	return cs.images
+}
+func (cs *ConfigurationSuite) CustomImages() []CustomImage {
+	return cs.customImages
+}
+
+func newSuiteConfiguration(path string, config suiteConfiguration) (*ConfigurationSuite, error) {
 	customImages := make([]CustomImage, 0, len(config.CustomImages))
-	for name, value := range config.CustomImages {
-		ref, err := reference.Parse(name)
+	for _, value := range config.CustomImages {
+		ref, err := reference.Parse(value.Tag)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		target, ok := ref.(reference.NamedTagged)
 		if !ok {
-			return fmt.Errorf("expecting name:tag for image target, got %s", name)
+			return nil, fmt.Errorf("expecting name:tag for image target, got %s", value.Tag)
 		}
 
 		customImages = append(customImages, CustomImage{
@@ -458,36 +451,39 @@ func (c *ConfigurationFile) addSuiteConfig(path string, config *suiteConfigurati
 	for _, image := range config.Images {
 		named, err := getNamedTagged(image)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		images = append(images, named)
 	}
 
-	resolver := &suiteResolver{
-		suiteConfiguration: config,
-		path:               path,
-		customImages:       customImages,
-		images:             images,
-	}
+	var base reference.NamedTagged
 	if config.Base != "" {
 		var err error
-		resolver.base, err = getNamedTagged(config.Base)
+		base, err = getNamedTagged(config.Base)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	c.suites[config.Name] = ConfigurationSuite{
-		Resolver: resolver,
+	name := config.Name
+	if name == "" {
+		name = filepath.Base(path)
+	}
 
-		// TODO: Add multiple configuration support
+	return &ConfigurationSuite{
+		config:       config,
+		path:         path,
+		base:         base,
+		customImages: customImages,
+		images:       images,
+
+		resolvedName: name,
+
 		Pretest: config.Pretest,
 		Command: config.Testrunner,
 		Args:    config.Testargs,
 		Env:     config.Testenv,
-	}
-
-	return nil
+	}, nil
 }
 
 func getNamedTagged(image string) (reference.NamedTagged, error) {
@@ -502,89 +498,66 @@ func getNamedTagged(image string) (reference.NamedTagged, error) {
 	return named, nil
 }
 
-func (c *ConfigurationFile) addSuite(path, name string) error {
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(c.root, path)
-	}
-
-	confBytes, err := ioutil.ReadFile(path)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("unable to open configuration file %s: %s", path, err)
-		}
-		// TODO: Add test runner detection so this does not need to return an error
-		return errors.New("no suite configuration found")
-	}
-
-	sc := suiteConfigurationFile{}
-	if err := toml.Unmarshal(confBytes, &sc); err != nil {
-		return err
-	}
-
-	if sc.Suite == nil {
-		// TODO: Handle support for no relevant configuration
-		return errors.New("no suite configuration found")
-	}
-
-	return c.addSuiteConfig(path, sc.Suite)
-}
-
-func (c *ConfigurationFile) Suites() map[string]ConfigurationSuite {
-	return c.suites
-}
-
-func ParseConfigurationFile(conf string, suites map[string]string) (*ConfigurationFile, error) {
-	c := &ConfigurationFile{
-		root:   filepath.Dir(conf),
-		suites: map[string]ConfigurationSuite{},
-	}
-	if len(suites) > 0 {
-		for name, path := range suites {
-			if err := c.addSuite(string(path), name); err != nil {
-				return nil, err
-			}
-		}
-	} else {
-		confBytes, err := ioutil.ReadFile(conf)
+func ParseSuites(suites []string) (map[string]*ConfigurationSuite, error) {
+	configs := map[string]*ConfigurationSuite{}
+	for _, suite := range suites {
+		logrus.Debugf("Handling suite %s", suite)
+		absPath, err := filepath.Abs(suite)
 		if err != nil {
-			if !os.IsNotExist(err) {
-				return nil, fmt.Errorf("unable to open configuration file %s: %s", conf, err)
-			}
-			// TODO: Add test runner detection so this does not need to return an error
-			return nil, errors.New("no suite configuration found")
+			return nil, fmt.Errorf("could not resolve %s: %s", suite, err)
 		}
 
-		ac := anyConfigurationFile{}
-		if err := toml.Unmarshal(confBytes, &ac); err != nil {
-			return nil, err
+		info, err := os.Stat(absPath)
+		if err != nil {
+			return nil, fmt.Errorf("error statting %s: %s", suite, err)
+		}
+		if info.IsDir() {
+			absPath = filepath.Join(absPath, "golem.conf")
+			if _, err := os.Stat(absPath); err != nil {
+				return nil, fmt.Errorf("error statting %s: %s", filepath.Join(suite, "golem.conf"), err)
+			}
 		}
 
-		if ac.Suite != nil && len(ac.Suites) > 0 {
-			return nil, fmt.Errorf("ambiguous configuration: must be single suite or set of suites")
+		confBytes, err := ioutil.ReadFile(absPath)
+		if err != nil {
+			return nil, fmt.Errorf("unable to open configuration file %s: %s", absPath, err)
 		}
-		if len(ac.Suites) > 0 {
-			for name, suite := range ac.Suites {
-				if err := c.addSuite(suite.Directory, name); err != nil {
-					return nil, err
-				}
-			}
+
+		// Load
+		var conf suitesConfiguration
+		if err := toml.Unmarshal(confBytes, &conf); err != nil {
+			return nil, fmt.Errorf("error unmarshalling %s: %s", absPath, err)
 		}
-		if ac.Suite != nil {
-			// Add single configuration
-			if ac.Suite.Name == "" {
-				ac.Suite.Name = filepath.Base(filepath.Dir(conf))
-			}
-			if err := c.addSuiteConfig(filepath.Dir(conf), ac.Suite); err != nil {
+
+		logrus.Debugf("Found %d test suites in %s", len(conf.Suites), suite)
+		for _, sc := range conf.Suites {
+			p := filepath.Dir(absPath)
+			suiteConfig, err := newSuiteConfiguration(p, sc)
+			if err != nil {
 				return nil, err
 			}
+
+			name := suiteConfig.Name()
+			_, ok := configs[name]
+			for i := 1; ok; i++ {
+				name = fmt.Sprintf("%s-%d", suiteConfig.Name(), i)
+				_, ok = configs[name]
+			}
+			suiteConfig.SetName(name)
+			configs[name] = suiteConfig
 		}
 	}
 
-	return c, nil
+	return configs, nil
 }
 
 type customimageConfiguration struct {
+	Tag     string `toml:"tag"`
 	Default string `toml:"default"`
+}
+
+type suitesConfiguration struct {
+	Suites []suiteConfiguration `toml:"suite"`
 }
 
 type suiteConfiguration struct {
@@ -618,20 +591,7 @@ type suiteConfiguration struct {
 
 	// CustomImages allow runtime selection of an image inside the container
 	// automatically set dind to true
-	CustomImages map[string]customimageConfiguration `toml:"customimages"`
-}
-
-type directoryConfiguration struct {
-	Directory string `toml:"directory"`
-}
-
-type suiteConfigurationFile struct {
-	Suite *suiteConfiguration `toml:"suite"`
-}
-
-type anyConfigurationFile struct {
-	suiteConfigurationFile
-	Suites map[string]*directoryConfiguration `toml:"suites"`
+	CustomImages []customimageConfiguration `toml:"customimage"`
 }
 
 func assertTagged(image string) reference.NamedTagged {
