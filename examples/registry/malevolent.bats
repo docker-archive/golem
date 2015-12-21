@@ -27,7 +27,7 @@ function setup() {
 
 @test "Test malevolent image name change" {
 	imagename="$host/$base/rename"
-	image="$imagename:lastest"
+	image="$imagename:latest"
 	docker tag -f $base:latest $image
 	run docker push $image
 	[ "$status" -eq 0 ]
@@ -171,4 +171,27 @@ function setup() {
 	[ "$id1" != "$truncid1" ]
 
 	[ "$id2" != "$truncid2" ]
+}
+
+@test "Test malevolent upload block for cross repository push" {
+	# TODO: require registry version
+
+	imagename1="$host/$base/okupload"
+	imagename2="$host/$base/noupload"
+	image1="$imagename1:latest"
+	image2="$imagename2:latest"
+	docker tag -f $base:latest $image1
+	docker tag -f $base:latest $image2
+
+	# TODO: Push should fail, not allowed
+
+	run docker push $image1
+	[ "$status" -eq 0 ]
+	has_digest "$output"
+
+	# should now succeed with cross repository push
+	run docker push $image2
+	echo "$output"
+	[ "$status" -eq 0 ]
+	has_digest "$output"
 }

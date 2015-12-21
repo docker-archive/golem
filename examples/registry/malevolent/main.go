@@ -65,7 +65,7 @@ func main() {
 	router.GetRoute(v2.RouteNameTags).Handler(rHandler)
 	router.GetRoute(v2.RouteNameBlob).Handler(blobChanger{rHandler})
 	router.GetRoute(v2.RouteNameBlobUpload).Handler(rHandler)
-	router.GetRoute(v2.RouteNameBlobUploadChunk).Handler(rHandler)
+	router.GetRoute(v2.RouteNameBlobUploadChunk).Handler(uploadChanger{rHandler})
 
 	if cert != "" && certKey != "" {
 		http.ListenAndServeTLS(listenAddr, cert, certKey, logWrapper{router})
