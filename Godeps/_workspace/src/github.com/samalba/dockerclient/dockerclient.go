@@ -14,8 +14,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-
-	"github.com/Sirupsen/logrus"
 )
 
 const (
@@ -63,7 +61,6 @@ func NewDockerClientTimeout(daemonUrl string, tlsConfig *tls.Config, timeout tim
 			u.Scheme = "https"
 		}
 	}
-	logrus.Debugf("Parsed %s into %s", daemonUrl, u.String())
 	httpClient := newHTTPClient(u, tlsConfig, timeout)
 	return &DockerClient{u, httpClient, tlsConfig, 0, nil}, nil
 }
@@ -88,7 +85,6 @@ func (client *DockerClient) doStreamRequest(method string, path string, in io.Re
 	if (method == "POST" || method == "PUT") && in == nil {
 		in = bytes.NewReader(nil)
 	}
-	logrus.Debugf("Creating request as %q", client.URL.String()+path)
 	req, err := http.NewRequest(method, client.URL.String()+path, in)
 	if err != nil {
 		return nil, err

@@ -6,6 +6,10 @@
 	],
 	"Deps": [
 		{
+			"ImportPath": "github.com/BurntSushi/toml",
+			"Rev": "056c9bc7be7190eaa7715723883caffa5f8fa3e4"
+		},
+		{
 			"ImportPath": "github.com/Sirupsen/logrus",
 			"Comment": "v0.7.3",
 			"Rev": "55eb11d21d2a31a3cc93838241d04800f52e823d"
@@ -16,94 +20,47 @@
 		},
 		{
 			"ImportPath": "github.com/docker/distribution/digest",
-			"Comment": "v2.1.1-190-g0a3acb2",
-			"Rev": "0a3acb2625f553a71392ed9dc6ba1dde2cf3e3a8"
-		},
-		{
-			"ImportPath": "github.com/docker/distribution/manifest",
-			"Comment": "v2.1.1-190-g0a3acb2",
-			"Rev": "0a3acb2625f553a71392ed9dc6ba1dde2cf3e3a8"
+			"Comment": "v2.1.1-282-g9a7e897",
+			"Rev": "9a7e8975f11a21ffa6ded88ed1ab545f8f179b9b"
 		},
 		{
 			"ImportPath": "github.com/docker/distribution/reference",
-			"Comment": "v2.1.1-190-g0a3acb2",
-			"Rev": "0a3acb2625f553a71392ed9dc6ba1dde2cf3e3a8"
-		},
-		{
-			"ImportPath": "github.com/docker/distribution/registry/api/errcode",
-			"Comment": "v2.1.1-190-g0a3acb2",
-			"Rev": "0a3acb2625f553a71392ed9dc6ba1dde2cf3e3a8"
-		},
-		{
-			"ImportPath": "github.com/docker/distribution/registry/api/v2",
-			"Comment": "v2.1.1-190-g0a3acb2",
-			"Rev": "0a3acb2625f553a71392ed9dc6ba1dde2cf3e3a8"
-		},
-		{
-			"ImportPath": "github.com/docker/docker/pkg/archive",
-			"Comment": "v1.4.1-7866-gaeccd45",
-			"Rev": "aeccd45e5b4074cebb1cbe3bb51b6bde4111048a"
+			"Comment": "v2.1.1-282-g9a7e897",
+			"Rev": "9a7e8975f11a21ffa6ded88ed1ab545f8f179b9b"
 		},
 		{
 			"ImportPath": "github.com/docker/docker/pkg/fileutils",
-			"Comment": "v1.4.1-7866-gaeccd45",
-			"Rev": "aeccd45e5b4074cebb1cbe3bb51b6bde4111048a"
-		},
-		{
-			"ImportPath": "github.com/docker/docker/pkg/idtools",
-			"Comment": "v1.4.1-7866-gaeccd45",
-			"Rev": "aeccd45e5b4074cebb1cbe3bb51b6bde4111048a"
+			"Comment": "v1.9.1",
+			"Rev": "a34a1d598c6096ed8b5ce5219e77d68e5cd85462"
 		},
 		{
 			"ImportPath": "github.com/docker/docker/pkg/ioutils",
-			"Comment": "v1.4.1-7866-gaeccd45",
-			"Rev": "aeccd45e5b4074cebb1cbe3bb51b6bde4111048a"
+			"Comment": "v1.9.1",
+			"Rev": "a34a1d598c6096ed8b5ce5219e77d68e5cd85462"
 		},
 		{
 			"ImportPath": "github.com/docker/docker/pkg/pools",
-			"Comment": "v1.4.1-7866-gaeccd45",
-			"Rev": "aeccd45e5b4074cebb1cbe3bb51b6bde4111048a"
-		},
-		{
-			"ImportPath": "github.com/docker/docker/pkg/promise",
-			"Comment": "v1.4.1-7866-gaeccd45",
-			"Rev": "aeccd45e5b4074cebb1cbe3bb51b6bde4111048a"
+			"Comment": "v1.9.1",
+			"Rev": "a34a1d598c6096ed8b5ce5219e77d68e5cd85462"
 		},
 		{
 			"ImportPath": "github.com/docker/docker/pkg/stdcopy",
-			"Comment": "v1.4.1-7866-gaeccd45",
-			"Rev": "aeccd45e5b4074cebb1cbe3bb51b6bde4111048a"
+			"Comment": "v1.9.1",
+			"Rev": "a34a1d598c6096ed8b5ce5219e77d68e5cd85462"
 		},
 		{
 			"ImportPath": "github.com/docker/docker/pkg/system",
-			"Comment": "v1.4.1-7866-gaeccd45",
-			"Rev": "aeccd45e5b4074cebb1cbe3bb51b6bde4111048a"
-		},
-		{
-			"ImportPath": "github.com/docker/docker/pkg/tarsum",
-			"Comment": "v1.4.1-7866-gaeccd45",
-			"Rev": "aeccd45e5b4074cebb1cbe3bb51b6bde4111048a"
+			"Comment": "v1.9.1",
+			"Rev": "a34a1d598c6096ed8b5ce5219e77d68e5cd85462"
 		},
 		{
 			"ImportPath": "github.com/docker/docker/pkg/units",
-			"Comment": "v1.4.1-7866-gaeccd45",
-			"Rev": "aeccd45e5b4074cebb1cbe3bb51b6bde4111048a"
-		},
-		{
-			"ImportPath": "github.com/docker/libtrust",
-			"Rev": "fa567046d9b14f6aa788882a950d69651d230b21"
+			"Comment": "v1.9.1",
+			"Rev": "a34a1d598c6096ed8b5ce5219e77d68e5cd85462"
 		},
 		{
 			"ImportPath": "github.com/fsouza/go-dockerclient",
 			"Rev": "e5484ae6ff25ce3b91fd8eb2e4544e049086e669"
-		},
-		{
-			"ImportPath": "github.com/gorilla/context",
-			"Rev": "14f550f51af52180c2eefed15e5fd18d63c0a64a"
-		},
-		{
-			"ImportPath": "github.com/gorilla/mux",
-			"Rev": "e444e69cbd2e2e3e0749a2f3c717cec491552bbf"
 		},
 		{
 			"ImportPath": "github.com/jlhawn/dockramp/archive",
@@ -120,6 +77,10 @@
 		{
 			"ImportPath": "github.com/samalba/dockerclient",
 			"Rev": "82381805d3533c97cec74e1cc79b00ef45774571"
+		},
+		{
+			"ImportPath": "github.com/termie/go-shutil",
+			"Rev": "bcacb06fecaeec8dc42af03c87c6949f4a05c74c"
 		}
 	]
 }
