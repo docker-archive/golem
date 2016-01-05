@@ -29,20 +29,36 @@ type BaseImageConfiguration struct {
 	DockerVersion     versionutil.Version
 }
 
+type Script struct {
+	Command []string `json:"command"`
+	Env     []string `json:"env"`
+}
+
+type TestScript struct {
+	Script
+	Format string `json:"format"`
+}
+
 type RunConfiguration struct {
-	Name string
-	Args []string
-	Env  []string
+	Setup      []Script     `json:"setup"`
+	TestRunner []TestScript `json:"runner"`
+}
+
+type InstanceConfiguration struct {
+	RunConfiguration
+
+	Name      string
+	BaseImage BaseImageConfiguration
 }
 
 type SuiteConfiguration struct {
 	Name string
 	Path string
+	Args []string
 
 	DockerInDocker bool
-	BaseImage      BaseImageConfiguration
 
-	Instances []RunConfiguration
+	Instances []InstanceConfiguration
 }
 
 type RunnerConfiguration struct {
@@ -81,49 +97,65 @@ func (r *Runner) imageName(name string) string {
 
 func (r *Runner) Build(client DockerClient) error {
 	for _, suite := range r.config.Suites {
-		baseImage, err := BuildBaseImage(client, suite.BaseImage, r.cache)
-		if err != nil {
-			return fmt.Errorf("failure building base image: %v", err)
-		}
+		for _, instance := range suite.Instances {
+			baseImage, err := BuildBaseImage(client, instance.BaseImage, r.cache)
+			if err != nil {
+				return fmt.Errorf("failure building base image: %v", err)
+			}
 
-		// Create temp build directory
-		td, err := ioutil.TempDir("", "golem-")
-		if err != nil {
-			return fmt.Errorf("unable to create tempdir: %v", err)
-		}
-		defer os.RemoveAll(td)
+			// Create temp build directory
+			td, err := ioutil.TempDir("", "golem-")
+			if err != nil {
+				return fmt.Errorf("unable to create tempdir: %v", err)
+			}
+			defer os.RemoveAll(td)
 
-		// Create Dockerfile in tempDir
-		df, err := os.OpenFile(filepath.Join(td, "Dockerfile"), os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			return fmt.Errorf("error creating dockerfile: %v", err)
-		}
-		defer df.Close()
+			// Create Dockerfile in tempDir
+			df, err := os.OpenFile(filepath.Join(td, "Dockerfile"), os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				return fmt.Errorf("error creating dockerfile: %v", err)
+			}
+			defer df.Close()
 
-		fmt.Fprintf(df, "FROM %s\n", baseImage)
+			fmt.Fprintf(df, "FROM %s\n", baseImage)
 
-		// TODO: Move to base image
-		buildutil.CopyFile(r.config.ExecutablePath, filepath.Join(td, r.config.ExecutableName), 0755)
-		fmt.Fprintf(df, "COPY ./%s /usr/bin/%s\n", r.config.ExecutableName, r.config.ExecutableName)
+			// TODO: Move to base image
+			buildutil.CopyFile(r.config.ExecutablePath, filepath.Join(td, r.config.ExecutableName), 0755)
+			fmt.Fprintf(df, "COPY ./%s /usr/bin/%s\n", r.config.ExecutableName, r.config.ExecutableName)
 
-		logrus.Debugf("Copying %s to %s", suite.Path, filepath.Join(td, "runner"))
-		if err := shutil.CopyTree(suite.Path, filepath.Join(td, "runner"), nil); err != nil {
-			return fmt.Errorf("error copying test directory: %v", err)
-		}
+			logrus.Debugf("Copying %s to %s", suite.Path, filepath.Join(td, "runner"))
+			if err := shutil.CopyTree(suite.Path, filepath.Join(td, "runner"), nil); err != nil {
+				return fmt.Errorf("error copying test directory: %v", err)
+			}
 
-		fmt.Fprintln(df, "COPY ./runner/ /runner")
+			fmt.Fprintln(df, "COPY ./runner/ /runner")
 
-		if err := df.Close(); err != nil {
-			return fmt.Errorf("error closing dockerfile: %s", err)
-		}
+			logrus.Debugf("Run configuration: %#v", instance.RunConfiguration)
 
-		builder, err := client.NewBuilder(td, "", r.imageName(suite.Name))
-		if err != nil {
-			return fmt.Errorf("failed to create builder: %s", err)
-		}
+			instanceF, err := os.Create(filepath.Join(td, "instance.json"))
+			if err != nil {
+				return fmt.Errorf("error creating instance json file: %s", err)
+			}
+			if err := json.NewEncoder(instanceF).Encode(instance.RunConfiguration); err != nil {
+				instanceF.Close()
+				return fmt.Errorf("error encoding configuration: %s", err)
+			}
+			instanceF.Close()
 
-		if err := builder.Run(); err != nil {
-			return fmt.Errorf("build error: %s", err)
+			fmt.Fprintln(df, "COPY ./instance.json /instance.json")
+
+			if err := df.Close(); err != nil {
+				return fmt.Errorf("error closing dockerfile: %s", err)
+			}
+
+			builder, err := client.NewBuilder(td, "", r.imageName(instance.Name))
+			if err != nil {
+				return fmt.Errorf("failed to create builder: %s", err)
+			}
+
+			if err := builder.Run(); err != nil {
+				return fmt.Errorf("build error: %s", err)
+			}
 		}
 	}
 	return nil
@@ -136,17 +168,21 @@ func (r *Runner) Run(client DockerClient) error {
 		for _, instance := range suite.Instances {
 			// TODO: Add configuration for nocache
 			nocache := false
-			contName := "golem-" + suite.Name + "-" + instance.Name
+			contName := "golem-" + instance.Name
 
 			hc := &dockerclient.HostConfig{
 				Privileged: true,
 			}
 
-			// TODO: Set arguments for runner
+			args := []string{}
+			if suite.DockerInDocker {
+				args = append(args, "-docker")
+			}
+			// TODO: Add argument for instance name
+
 			config := &dockerclient.Config{
 				Image:      r.imageName(suite.Name),
-				Cmd:        append([]string{fmt.Sprintf("/usr/bin/%s", r.config.ExecutableName)}, instance.Args...),
-				Env:        instance.Env,
+				Cmd:        append([]string{fmt.Sprintf("/usr/bin/%s", r.config.ExecutableName)}, args...),
 				WorkingDir: "/runner",
 				Volumes: map[string]struct{}{
 					"/var/log/docker": struct{}{},

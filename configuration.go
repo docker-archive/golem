@@ -189,41 +189,46 @@ func (c *ConfigurationManager) RunnerConfiguration(loadDockerVersion versionutil
 	for _, suite := range suites {
 		resolver := MultiResolver(c.flagResolver, suite, globalDefault)
 
+		registrySuite := SuiteConfiguration{
+			Name:           resolver.Name(),
+			Path:           resolver.Path(),
+			DockerInDocker: resolver.Dind(),
+		}
+
 		baseConf := BaseImageConfiguration{
 			Base:              resolver.BaseImage(),
 			ExtraImages:       resolver.Images(),
-			CustomImages:      resolver.CustomImages(),
 			DockerLoadVersion: loadDockerVersion,
 			DockerVersion:     versionutil.Version(c.dockerVersion),
 		}
 
-		registrySuite := SuiteConfiguration{
-			Name:           resolver.Name(),
-			Path:           resolver.Path(),
-			BaseImage:      baseConf,
-			DockerInDocker: resolver.Dind(),
+		instances := resolver.Instances()
+
+		for idx, instance := range instances {
+			name := registrySuite.Name
+			if len(instances) > 1 {
+				name = fmt.Sprintf("%s-%d", name, idx+1)
+			}
+			imageConf := baseConf
+			imageConf.CustomImages = instance.CustomImages
+
+			conf := InstanceConfiguration{
+				Name:             name,
+				BaseImage:        imageConf,
+				RunConfiguration: instance.RunConfiguration,
+			}
+			registrySuite.Instances = append(registrySuite.Instances, conf)
 		}
 
-		// Set runner arguments
-		args := []string{"-command", suite.Command}
-		if resolver.Dind() {
-			args = append(args, "-docker")
-
-		}
-		for _, pretest := range suite.Pretest {
-			args = append(args, "-prescript", pretest)
-		}
-
-		args = append(args, suite.Args...)
-		registrySuite.Instances = append(registrySuite.Instances, RunConfiguration{
-			Name: "default",
-			Env:  suite.Env,
-			Args: args,
-		})
 		runnerConfig.Suites = append(runnerConfig.Suites, registrySuite)
 	}
 
 	return runnerConfig, nil
+}
+
+type RunnerInstance struct {
+	RunConfiguration
+	CustomImages []CustomImage
 }
 
 type Resolver interface {
@@ -232,7 +237,7 @@ type Resolver interface {
 	BaseImage() reference.NamedTagged
 	Dind() bool
 	Images() []reference.NamedTagged
-	CustomImages() []CustomImage
+	Instances() []RunnerInstance
 }
 
 type flagResolver struct {
@@ -269,12 +274,16 @@ func (fr *flagResolver) Images() []reference.NamedTagged {
 	return nil
 }
 
-func (fr *flagResolver) CustomImages() []CustomImage {
+func (fr *flagResolver) Instances() []RunnerInstance {
 	customImages := make([]CustomImage, 0, len(fr.customImages))
 	for _, ci := range fr.customImages {
 		customImages = append(customImages, ci)
 	}
-	return customImages
+	return []RunnerInstance{
+		{
+			CustomImages: customImages,
+		},
+	}
 }
 
 // defaultResolver is used to inject defaults
@@ -303,7 +312,7 @@ func (dr defaultResolver) Images() []reference.NamedTagged {
 	return nil
 }
 
-func (dr defaultResolver) CustomImages() []CustomImage {
+func (dr defaultResolver) Instances() []RunnerInstance {
 	return nil
 }
 
@@ -371,19 +380,32 @@ func (mr multiResolver) Images() []reference.NamedTagged {
 	return images
 }
 
-func (mr multiResolver) CustomImages() []CustomImage {
+func (mr multiResolver) Instances() []RunnerInstance {
+	// TODO: Expand images when there are multiple values for a target
 	imageSet := map[string]CustomImage{}
+	runConfig := RunConfiguration{}
 	// Loop in reverse to ensure that base values get overwritten
 	for i := len(mr.resolvers) - 1; i >= 0; i-- {
-		for _, ci := range mr.resolvers[i].CustomImages() {
-			imageSet[ci.Target.String()] = ci
+		for _, inst := range mr.resolvers[i].Instances() {
+			for _, ci := range inst.CustomImages {
+				imageSet[ci.Target.String()] = ci
+			}
+			runConfig.Setup = append(runConfig.Setup, inst.RunConfiguration.Setup...)
+			runConfig.TestRunner = append(runConfig.TestRunner, inst.RunConfiguration.TestRunner...)
 		}
 	}
 	images := make([]CustomImage, 0, len(imageSet))
 	for _, ci := range imageSet {
 		images = append(images, ci)
 	}
-	return images
+	// TODO: Keep multiple instances
+	// TODO: Squash runconfigurations for potential duplicates
+	return []RunnerInstance{
+		{
+			RunConfiguration: runConfig,
+			CustomImages:     images,
+		},
+	}
 }
 
 type ConfigurationSuite struct {
@@ -395,12 +417,6 @@ type ConfigurationSuite struct {
 	customImages []CustomImage
 
 	resolvedName string
-
-	// Target information
-	Pretest []string
-	Command string
-	Args    []string
-	Env     []string
 }
 
 func (cs *ConfigurationSuite) SetName(name string) {
@@ -426,8 +442,32 @@ func (cs *ConfigurationSuite) Dind() bool {
 func (cs *ConfigurationSuite) Images() []reference.NamedTagged {
 	return cs.images
 }
-func (cs *ConfigurationSuite) CustomImages() []CustomImage {
-	return cs.customImages
+func (cs *ConfigurationSuite) Instances() []RunnerInstance {
+	// TODO: Allow multiple instance configuration
+	runInstance := RunnerInstance{
+		CustomImages: cs.customImages,
+	}
+	for _, script := range cs.config.Pretest {
+		// TODO: respect quoted values
+		command := strings.Split(script.Command, " ")
+		runInstance.Setup = append(runInstance.Setup, Script{
+			Command: command,
+			Env:     script.Env,
+		})
+	}
+	for _, script := range cs.config.Runner {
+		// TODO: respect quoted values
+		command := strings.Split(script.Command, " ")
+		runInstance.TestRunner = append(runInstance.TestRunner, TestScript{
+			Script: Script{
+				Command: command,
+				Env:     script.Env,
+			},
+			Format: script.Format,
+		})
+	}
+
+	return []RunnerInstance{runInstance}
 }
 
 func newSuiteConfiguration(path string, config suiteConfiguration) (*ConfigurationSuite, error) {
@@ -478,11 +518,6 @@ func newSuiteConfiguration(path string, config suiteConfiguration) (*Configurati
 		images:       images,
 
 		resolvedName: name,
-
-		Pretest: config.Pretest,
-		Command: config.Testrunner,
-		Args:    config.Testargs,
-		Env:     config.Testenv,
 	}, nil
 }
 
@@ -560,6 +595,17 @@ type suitesConfiguration struct {
 	Suites []suiteConfiguration `toml:"suite"`
 }
 
+type pretestConfiguration struct {
+	Command string   `toml:"command"`
+	Env     []string `toml:"env"`
+}
+
+type runnerConfiguration struct {
+	Command string   `toml:"command"`
+	Format  string   `toml:"format"`
+	Env     []string `toml:"env"`
+}
+
 type suiteConfiguration struct {
 	// Name is used to set the name of this suite, if none is set here then the name
 	// should be set by the runner configuration or using the directory name
@@ -573,17 +619,12 @@ type suiteConfiguration struct {
 	Base string `toml:"baseimage"`
 
 	// Pretest is the commands to run before the test starts
-	Pretest []string `toml:"pretest"`
+	Pretest []pretestConfiguration `toml:"pretest"`
 
-	// Testrunner determines what will be used to run the tests
-	// Supprted test runners ["go", "bats"]
-	Testrunner string `toml:"testrunner"`
-
-	// Testargs are additional arguments to give to the test runner
-	Testargs []string `toml:"testargs"`
-
-	// Testenv are additional environment variables for the test runner process
-	Testenv []string `toml:"testenv"`
+	// Runner are the commands to run for the test. Each command
+	// must run without error for the suite to be considered passed.
+	// Each command may have a different output format.
+	Runner []runnerConfiguration `toml:"testrunner"`
 
 	// Images which should exist in the test container
 	// automatically set dind to true

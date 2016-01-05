@@ -1,11 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/dmcgowan/golem/buildutil"
@@ -107,31 +107,17 @@ func main() {
 	}
 }
 
-type pretestScripts [][]string
-
-func (p *pretestScripts) String() string {
-	return ""
-}
-
-func (p *pretestScripts) Set(value string) error {
-	args := strings.Split(value, " ")
-	*p = append(*p, args)
-	return nil
-}
-
 func runnerMain() {
 	var (
 		command string
 		dind    bool
 		clean   bool
-		pretest = pretestScripts{}
 	)
 
 	// TODO: Parse runner options
 	flag.StringVar(&command, "command", "bats", "Command to run")
 	flag.BoolVar(&dind, "docker", false, "Whether to run docker")
 	flag.BoolVar(&clean, "clean", false, "Whether to ensure /var/lib/docker is empty")
-	flag.Var(&pretest, "prescript", "Scripts to run before tests")
 
 	flag.Parse()
 
@@ -159,16 +145,26 @@ func runnerMain() {
 	testCapturer := NewConsoleLogCapturer()
 	defer testCapturer.Close()
 
+	instanceF, err := os.Open("/instance.json")
+	if err != nil {
+		logrus.Fatalf("Error opening instance file: %v", err)
+	}
+
+	var instanceConfig RunConfiguration
+	if err := json.NewDecoder(instanceF).Decode(&instanceConfig); err != nil {
+		logrus.Fatalf("Error decoding instance configuration: %v", err)
+	}
+
 	suiteConfig := SuiteRunnerConfiguration{
 		DockerLoadLogCapturer: loadCapturer,
 		DockerLogCapturer:     daemonCapturer,
-		SetupLogCapturer:      scriptCapturer,
-		TestCapturer:          testCapturer,
+
+		RunConfiguration: instanceConfig,
+		SetupLogCapturer: scriptCapturer,
+		TestCapturer:     testCapturer,
 
 		CleanDockerGraph: clean,
-		SetupScripts:     [][]string(pretest),
 		DockerInDocker:   dind,
-		TestEnv:          os.Environ(),
 	}
 
 	if composeCapturer != nil {
@@ -176,18 +172,6 @@ func runnerMain() {
 		suiteConfig.ComposeFile = composeFile
 
 	}
-	args := []string{}
-	switch command {
-	case "bats":
-		args = append(args, "-t")
-	case "go":
-	default:
-		logrus.Fatalf("Unsupported command %s", command)
-	}
-	args = append(args, flag.Args()...)
-
-	suiteConfig.TestCommand = command
-	suiteConfig.TestArgs = args
 
 	runner := NewSuiteRunner(suiteConfig)
 
@@ -204,7 +188,6 @@ func runnerMain() {
 	if runErr != nil {
 		logrus.Fatalf("Test errored: %v", runErr)
 	}
-
 }
 
 func newFileCapturer(name string) LogCapturer {

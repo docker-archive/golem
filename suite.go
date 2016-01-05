@@ -23,16 +23,12 @@ type SuiteRunnerConfiguration struct {
 	DockerLoadLogCapturer LogCapturer
 	DockerLogCapturer     LogCapturer
 
-	SetupScripts     [][]string
-	SetupLogCapturer LogCapturer
-
 	ComposeFile     string
 	ComposeCapturer LogCapturer
 
-	TestCommand  string
-	TestArgs     []string
-	TestEnv      []string
-	TestCapturer LogCapturer
+	RunConfiguration RunConfiguration
+	SetupLogCapturer LogCapturer
+	TestCapturer     LogCapturer
 }
 
 type SuiteRunner struct {
@@ -106,9 +102,9 @@ func (sr *SuiteRunner) Setup() error {
 	}
 
 	// Run all setup scripts
-	for _, setupScript := range sr.config.SetupScripts {
-		if err := RunScript(sr.config.SetupLogCapturer, setupScript[0], setupScript[1:]...); err != nil {
-			return fmt.Errorf("error running setup script %s: %s", setupScript[0], err)
+	for _, setupScript := range sr.config.RunConfiguration.Setup {
+		if err := RunScript(sr.config.SetupLogCapturer, setupScript); err != nil {
+			return fmt.Errorf("error running setup script %s: %s", setupScript.Command[0], err)
 		}
 	}
 
@@ -123,17 +119,26 @@ func (sr *SuiteRunner) Setup() error {
 
 		if sr.config.ComposeFile != "" {
 			logrus.Debugf("Build compose images")
-			if err := RunScript(sr.config.ComposeCapturer, "docker-compose", "-f", sr.config.ComposeFile, "build", "--no-cache"); err != nil {
+			buildScript := Script{
+				Command: []string{"docker-compose", "-f", sr.config.ComposeFile, "build", "--no-cache"},
+			}
+			if err := RunScript(sr.config.ComposeCapturer, buildScript); err != nil {
 				return fmt.Errorf("error running docker compose build: %v", err)
 			}
+			upScript := Script{
+				Command: []string{"docker-compose", "-f", sr.config.ComposeFile, "up", "-d"},
+			}
 
-			if err := RunScript(sr.config.ComposeCapturer, "docker-compose", "-f", sr.config.ComposeFile, "up", "-d"); err != nil {
+			if err := RunScript(sr.config.ComposeCapturer, upScript); err != nil {
 				return fmt.Errorf("error running docker compose up: %v", err)
 			}
 
 			go func() {
 				logrus.Debugf("Listening for logs")
-				if err := RunScript(sr.config.ComposeCapturer, "docker-compose", "-f", sr.config.ComposeFile, "logs"); err != nil {
+				logScript := Script{
+					Command: []string{"docker-compose", "-f", sr.config.ComposeFile, "logs"},
+				}
+				if err := RunScript(sr.config.ComposeCapturer, logScript); err != nil {
 					logrus.Errorf("Error running docker compose logs: %v", err)
 				}
 			}()
@@ -146,7 +151,10 @@ func (sr *SuiteRunner) Setup() error {
 func (sr *SuiteRunner) TearDown() (err error) {
 	if sr.config.DockerInDocker {
 		if sr.config.ComposeFile != "" {
-			if err := RunScript(sr.config.ComposeCapturer, "docker-compose", "-f", sr.config.ComposeFile, "stop"); err != nil {
+			stopScript := Script{
+				Command: []string{"docker-compose", "-f", sr.config.ComposeFile, "stop"},
+			}
+			if err := RunScript(sr.config.ComposeCapturer, stopScript); err != nil {
 				logrus.Errorf("Error stopping docker compose: %v", err)
 			}
 		}
@@ -160,23 +168,27 @@ func (sr *SuiteRunner) TearDown() (err error) {
 }
 
 func (sr *SuiteRunner) RunTests() error {
-	cmd := exec.Command(sr.config.TestCommand, sr.config.TestArgs...)
-	// TODO: Parse Stdout
-	cmd.Stdout = sr.config.TestCapturer.Stdout()
-	cmd.Stderr = sr.config.TestCapturer.Stderr()
-	cmd.Env = sr.config.TestEnv
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("could not start test command: %s", err)
+	for _, runner := range sr.config.RunConfiguration.TestRunner {
+		cmd := exec.Command(runner.Command[0], runner.Command[1:]...)
+		// TODO: Parse Stdout using sr.config.RunConfiguration.TestRunner.Format
+		cmd.Stdout = sr.config.TestCapturer.Stdout()
+		cmd.Stderr = sr.config.TestCapturer.Stderr()
+		cmd.Env = runner.Env
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("run error: %s", err)
+		}
 	}
-	return cmd.Wait()
+
+	return nil
 }
 
-// RunScript rungs the script command attaching
+// RunScript runs the script command attaching
 // results to stdout and stdout
-func RunScript(lc LogCapturer, script string, args ...string) error {
-	cmd := exec.Command(script, args...)
+func RunScript(lc LogCapturer, script Script) error {
+	cmd := exec.Command(script.Command[0], script.Command[1:]...)
 	cmd.Stdout = lc.Stdout()
 	cmd.Stderr = lc.Stderr()
+	cmd.Env = script.Env
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("could not start script: %s", err)
 	}
