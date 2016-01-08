@@ -438,7 +438,7 @@ func cleanDockerGraph(graphDir string, v versionutil.Version) error {
 			if !info.IsDir() {
 				if strings.HasPrefix(filepath.Base(path), ".migrat") {
 					logrus.Debugf("Removing migration file %s", path)
-					if err := os.Remove(filepath.Join(root, path)); err != nil {
+					if err := os.Remove(path); err != nil {
 						return err
 					}
 				}
