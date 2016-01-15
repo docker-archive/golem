@@ -1,15 +1,13 @@
-# golem is an function to run tests from a local gopath
-# The local gopath should have docker and golem checked out
-function golem() {
-  $GOPATH/src/github.com/docker/golem/run.sh $@
-}
+# TODO: Set docker development root (default to $GOROOT/src/github.com/docker/docker
+# TODO: Support $GOPATH with multiple entries, use first by default
 
 # golem-docker is a function to run tests for a Docker development build
 # The first argument is docker binary bundle version to run ("default" to use image's default)
 # First issue "make binary" for the version to run
 function golem-docker() {
-  if [ "$1" != "default" ]; then
-    DOCKER_BINARY=$GOPATH/src/github.com/docker/docker/bundles/$1/binary/docker
+  docker_args=""
+  if [[ "$1" == *"-dev" ]]; then
+    DOCKER_BINARY=$(readlink -f "$GOPATH/src/github.com/docker/docker/bundles/$1/binary/docker")
     if [ ! -f $DOCKER_BINARY ]; then
       current_version=`cat $GOPATH/src/github.com/docker/docker/VERSION`
       echo "$DOCKER_BINARY does not exist"
@@ -17,10 +15,13 @@ function golem-docker() {
       echo "Checkout desired version and run 'make binary' from $GOPATH/src/github.com/docker/docker"
       return 1
     fi
+    docker_args="-db=$DOCKER_BINARY"
+  elif [ "$1" != "default" ]; then
+    docker_args="-docker-version=$1"
   fi
   shift
 
-  DOCKER_BINARY="$DOCKER_BINARY" $GOPATH/src/github.com/docker/golem/run.sh $@
+  golem $docker_args $@
 }
 
 function path_save_cd() {
@@ -41,6 +42,7 @@ function golem-docker-dev() {
   trap path_restore EXIT
   make binary
   version=`cat VERSION`
+  path_restore
   golem-docker $version $@
 }
 
