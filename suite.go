@@ -98,7 +98,6 @@ func (sr *SuiteRunner) Setup() error {
 		if err := pk(); err != nil {
 			return fmt.Errorf("error killing daemon %v", err)
 		}
-
 	}
 
 	// Run all setup scripts
@@ -241,7 +240,15 @@ func StartDaemon(binary string, lc LogCapturer) (*dockerclient.Client, func() er
 		time.Sleep(time.Second)
 	}
 
-	return client, cmd.Process.Kill, nil
+	kill := func() error {
+		if err := cmd.Process.Kill(); err != nil {
+			return err
+		}
+		time.Sleep(500 * time.Millisecond)
+		return os.RemoveAll("/var/run/docker.pid")
+	}
+
+	return client, kill, nil
 }
 
 type tagMap map[string][]string
