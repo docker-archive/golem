@@ -12,8 +12,8 @@ import (
 	"strings"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/dmcgowan/golem/versionutil"
 	"github.com/docker/distribution/digest"
+	"github.com/docker/golem/versionutil"
 )
 
 var (

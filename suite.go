@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/dmcgowan/golem/versionutil"
 	"github.com/docker/distribution/reference"
+	"github.com/docker/golem/versionutil"
 	dockerclient "github.com/fsouza/go-dockerclient"
 )
 

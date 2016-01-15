@@ -19,8 +19,8 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/Sirupsen/logrus"
 	"github.com/bugsnag/osext"
-	"github.com/dmcgowan/golem/versionutil"
 	"github.com/docker/distribution/reference"
+	"github.com/docker/golem/versionutil"
 )
 
 var globalDefault Resolver

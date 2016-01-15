@@ -1,5 +1,5 @@
 {
-	"ImportPath": "github.com/dmcgowan/golem/malevolent",
+	"ImportPath": "github.com/docker/golem/malevolent",
 	"GoVersion": "go1.4.2",
 	"Deps": [
 		{

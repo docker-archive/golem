@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/dmcgowan/golem/buildutil"
-	"github.com/dmcgowan/golem/clientutil"
-	"github.com/dmcgowan/golem/versionutil"
+	"github.com/docker/golem/buildutil"
+	"github.com/docker/golem/clientutil"
+	"github.com/docker/golem/versionutil"
 )
 
 func main() {

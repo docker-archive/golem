@@ -1,5 +1,5 @@
 {
-	"ImportPath": "github.com/dmcgowan/golem",
+	"ImportPath": "github.com/docker/golem",
 	"GoVersion": "go1.5.1",
 	"Packages": [
 		"./..."

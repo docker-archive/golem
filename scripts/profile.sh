@@ -1,7 +1,7 @@
 # golem is an function to run tests from a local gopath
 # The local gopath should have docker and golem checked out
 function golem() {
-  $GOPATH/src/github.com/dmcgowan/golem/run.sh $@
+  $GOPATH/src/github.com/docker/golem/run.sh $@
 }
 
 # golem-docker is a function to run tests for a Docker development build
@@ -20,7 +20,7 @@ function golem-docker() {
   fi
   shift
 
-  DOCKER_BINARY="$DOCKER_BINARY" $GOPATH/src/github.com/dmcgowan/golem/run.sh $@
+  DOCKER_BINARY="$DOCKER_BINARY" $GOPATH/src/github.com/docker/golem/run.sh $@
 }
 
 function path_save_cd() {

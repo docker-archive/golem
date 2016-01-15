@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/dmcgowan/golem/clientutil"
+	"github.com/docker/golem/clientutil"
 	dockerclient "github.com/fsouza/go-dockerclient"
 	"github.com/jlhawn/dockramp/build"
 )
