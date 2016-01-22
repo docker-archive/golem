@@ -1,4 +1,4 @@
-package main
+package runner
 
 import (
 	"io"
@@ -8,6 +8,8 @@ import (
 	"github.com/Sirupsen/logrus"
 )
 
+// LogCapturer is an interface for providing
+// writers to a logging backend.
 type LogCapturer interface {
 	Stdout() io.Writer
 	Stderr() io.Writer
@@ -28,6 +30,8 @@ func (consoleLogger) Close() error {
 	return nil
 }
 
+// NewConsoleLogCapturer creates a new log capturer
+// which uses the console as a backend.
 func NewConsoleLogCapturer() LogCapturer {
 	return consoleLogger{}
 }
@@ -37,6 +41,9 @@ type fileLogger struct {
 	stderr io.WriteCloser
 }
 
+// NewFileLogCapturer uses files as a logging backend.
+// Stdout and Stderr will be written to separate files
+// with suffixes "-stdout" and "-stderr".
 func NewFileLogCapturer(basename string) (LogCapturer, error) {
 	if err := os.MkdirAll(filepath.Dir(basename), 0755); err != nil {
 		return nil, err

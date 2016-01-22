@@ -1,4 +1,5 @@
-package main
+// Package runner provides a test runner for running golem test integration suites
+package runner
 
 import (
 	"encoding/json"
@@ -20,6 +21,10 @@ import (
 	"github.com/termie/go-shutil"
 )
 
+// BaseImageConfiguration represents the configuration for
+// constructing a base image used by a test suite. Every
+// container in the test suite will be derived from an
+// image created with this configuration.
 type BaseImageConfiguration struct {
 	Base         reference.Named
 	ExtraImages  []reference.NamedTagged
@@ -29,21 +34,30 @@ type BaseImageConfiguration struct {
 	DockerVersion     versionutil.Version
 }
 
+// Script is the configuration for running a command
+// including its environment.
 type Script struct {
 	Command []string `json:"command"`
 	Env     []string `json:"env"`
 }
 
+// TestScript is a command configuration along with
+// expected output for parsing test results.
 type TestScript struct {
 	Script
 	Format string `json:"format"`
 }
 
+// RunConfiguration is the all the command
+// configurations for running a test instance
+// including setup and test commands.
 type RunConfiguration struct {
 	Setup      []Script     `json:"setup"`
 	TestRunner []TestScript `json:"runner"`
 }
 
+// InstanceConfiguration is the configuration
+// for constructing the test instance container.
 type InstanceConfiguration struct {
 	RunConfiguration
 
@@ -51,6 +65,10 @@ type InstanceConfiguration struct {
 	BaseImage BaseImageConfiguration
 }
 
+// SuiteConfiguration is the configuration for
+// a test suite and is used for constructing
+// the test suite containers and runtime
+// configurations.
 type SuiteConfiguration struct {
 	Name string
 	Path string
@@ -61,7 +79,12 @@ type SuiteConfiguration struct {
 	Instances []InstanceConfiguration
 }
 
-type RunnerConfiguration struct {
+// runnerConfiguration is the configuration for
+// running a set of test suites. This configuration
+// determines which suites to run, how the base
+// images will be created, and how the test instances
+// should be run.
+type runnerConfiguration struct {
 	Suites []SuiteConfiguration
 
 	ExecutableName string
@@ -75,12 +98,17 @@ type RunnerConfiguration struct {
 	Swarm bool
 }
 
+// Runner represents a golem run session including
+// the run configuration information and cache
+// information to optimize creation and runtime.
 type Runner struct {
-	config RunnerConfiguration
+	config runnerConfiguration
 	cache  CacheConfiguration
 }
 
-func NewRunner(config RunnerConfiguration, cache CacheConfiguration) *Runner {
+// NewRunner creates a new runner from a runner
+// and cache configuration.
+func NewRunner(config runnerConfiguration, cache CacheConfiguration) *Runner {
 	return &Runner{
 		config: config,
 		cache:  cache,
@@ -95,6 +123,9 @@ func (r *Runner) imageName(name string) string {
 	return imageName
 }
 
+// Build builds all suite instance image configured for
+// the runner. The result of build will be locally built
+// and tagged images ready to push or run directory.
 func (r *Runner) Build(client DockerClient) error {
 	for _, suite := range r.config.Suites {
 		for _, instance := range suite.Instances {
@@ -161,6 +192,9 @@ func (r *Runner) Build(client DockerClient) error {
 	return nil
 }
 
+// Run starts the test instance containers as well as any
+// containers which will manage the tests and waits for
+// the results.
 func (r *Runner) Run(client DockerClient) error {
 	// TODO: Run in parallel (use libcompose?)
 	// TODO: validate namespace when in swarm mode
@@ -355,14 +389,25 @@ type tag struct {
 	Image string
 }
 
+// ImageCache reprsents a cache for mapping digests
+// to image ids. This can be used to create a custom
+// image build cache based on a digest from instructions.
 type ImageCache struct {
 	root string
+}
+
+// NewImageCache creates an image cache at the provided root.
+func NewImageCache(root string) *ImageCache {
+	return &ImageCache{
+		root: root,
+	}
 }
 
 func (ic *ImageCache) imageFile(dgst digest.Digest) string {
 	return filepath.Join(ic.root, dgst.Algorithm().String(), dgst.Hex())
 }
 
+// GetImage gets an image id with the associated digest from the cache.
 func (ic *ImageCache) GetImage(dgst digest.Digest) (string, error) {
 	f, err := os.Open(ic.imageFile(dgst))
 	if err != nil {
@@ -379,6 +424,8 @@ func (ic *ImageCache) GetImage(dgst digest.Digest) (string, error) {
 	return strings.TrimSpace(string(b)), nil
 }
 
+// SaveImage saves the associated id mapping to the provided digest.
+// This allows the image cache to act as a client side build cache.
 func (ic *ImageCache) SaveImage(dgst digest.Digest, id string) error {
 	fp := ic.imageFile(dgst)
 	if err := os.MkdirAll(filepath.Dir(fp), 0755); err != nil {
@@ -397,11 +444,17 @@ func (ic *ImageCache) SaveImage(dgst digest.Digest, id string) error {
 	return nil
 }
 
+// CustomImage represents an image which will exist in a test
+// container with a given name and exported from another
+// Docker instance with the source image name.
 type CustomImage struct {
 	Source string
 	Target reference.NamedTagged
 }
 
+// CacheConfiguration represents a cache configuration for
+// storing docker build version cache and a custome image
+// cache for locally built images.
 type CacheConfiguration struct {
 	ImageCache *ImageCache
 	BuildCache buildutil.BuildCache
@@ -541,11 +594,11 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 	}
 
 	// Update index
-	imageId := builder.ImageID()
+	imageID := builder.ImageID()
 
-	if err := c.ImageCache.SaveImage(imageHash, imageId); err != nil {
-		logrus.Errorf("Unable to save image by hash %s: %s", imageHash, imageId)
+	if err := c.ImageCache.SaveImage(imageHash, imageID); err != nil {
+		logrus.Errorf("Unable to save image by hash %s: %s", imageHash, imageID)
 	}
 
-	return imageId, nil
+	return imageID, nil
 }

@@ -1,4 +1,4 @@
-package main
+package runner
 
 import (
 	"github.com/docker/golem/clientutil"
@@ -6,11 +6,13 @@ import (
 	"github.com/jlhawn/dockramp/build"
 )
 
+// DockerClient represents the docker client used by the runner
 type DockerClient struct {
 	*dockerclient.Client
 	options *clientutil.ClientOptions
 }
 
+// NewDockerClient creates a new docker client from client options
 func NewDockerClient(co *clientutil.ClientOptions) (client DockerClient, err error) {
 	tlsConfig := co.TLSConfig()
 	var dc *dockerclient.Client
@@ -32,6 +34,7 @@ func NewDockerClient(co *clientutil.ClientOptions) (client DockerClient, err err
 	}, nil
 }
 
+// NewBuilder creates a new docker builder using the given client
 func (dc DockerClient) NewBuilder(contextDirectory, dockerfilePath, repoTag string) (*build.Builder, error) {
 	return build.NewBuilder(dc.options.DaemonURL(), dc.options.TLSConfig(), contextDirectory, dockerfilePath, repoTag)
 }

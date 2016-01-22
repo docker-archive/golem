@@ -1,4 +1,4 @@
-package main
+package runner
 
 // Suite Configuration Ordering
 // Golem defaults
@@ -23,7 +23,7 @@ import (
 	"github.com/docker/golem/versionutil"
 )
 
-var globalDefault Resolver
+var globalDefault resolver
 
 func init() {
 	cwd, err := os.Getwd()
@@ -120,12 +120,16 @@ func (s suites) Set(value string) error {
 	return nil
 }
 
+// ConfigurationManager manages flags and resolving configuration
+// settings into a runner configuration.
 type ConfigurationManager struct {
 	flagResolver  *flagResolver
 	dockerVersion configurationVersion
 	suites        suites
 }
 
+// NewConfigurationManager creates a new configuraiton manager
+// and registers associated flags.
 func NewConfigurationManager() *ConfigurationManager {
 	m := &ConfigurationManager{
 		flagResolver: newFlagResolver(),
@@ -138,31 +142,33 @@ func NewConfigurationManager() *ConfigurationManager {
 	return m
 }
 
-func (c *ConfigurationManager) RunnerConfiguration(loadDockerVersion versionutil.Version) (RunnerConfiguration, error) {
+// runnerConfiguration creates a runnerConfiguration resolving all the
+// configurations from command line and provided configuration files.
+func (c *ConfigurationManager) runnerConfiguration(loadDockerVersion versionutil.Version) (runnerConfiguration, error) {
 	// TODO: eliminate suites and just use arguments
 	var conf string
 	// Get first flag
 	if flag.NArg() == 0 {
 		cwd, err := os.Getwd()
 		if err != nil {
-			return RunnerConfiguration{}, err
+			return runnerConfiguration{}, err
 		}
 		conf = filepath.Join(cwd, "golem.conf")
 		logrus.Debugf("No configuration given, trying current directory %s", conf)
 	} else {
 		absPath, err := filepath.Abs(flag.Arg(0))
 		if err != nil {
-			return RunnerConfiguration{}, err
+			return runnerConfiguration{}, err
 		}
 
 		info, err := os.Stat(absPath)
 		if err != nil {
-			return RunnerConfiguration{}, err
+			return runnerConfiguration{}, err
 		}
 		if info.IsDir() {
 			absPath = filepath.Join(absPath, "golem.conf")
 			if _, err := os.Stat(absPath); err != nil {
-				return RunnerConfiguration{}, err
+				return runnerConfiguration{}, err
 
 			}
 		}
@@ -170,24 +176,24 @@ func (c *ConfigurationManager) RunnerConfiguration(loadDockerVersion versionutil
 
 	}
 
-	suites, err := ParseSuites(flag.Args())
+	suites, err := parseSuites(flag.Args())
 	if err != nil {
-		return RunnerConfiguration{}, err
+		return runnerConfiguration{}, err
 	}
 
 	// TODO: Support non-linux by downloading and replacing executable path
 	executablePath, err := osext.Executable()
 	if err != nil {
-		return RunnerConfiguration{}, fmt.Errorf("error getting path to executable: %s", err)
+		return runnerConfiguration{}, fmt.Errorf("error getting path to executable: %s", err)
 	}
 
-	runnerConfig := RunnerConfiguration{
+	runnerConfig := runnerConfiguration{
 		ExecutableName: "golem_runner",
 		ExecutablePath: executablePath,
 	}
 
 	for _, suite := range suites {
-		resolver := MultiResolver(c.flagResolver, suite, globalDefault)
+		resolver := newMultiResolver(c.flagResolver, suite, globalDefault)
 
 		registrySuite := SuiteConfiguration{
 			Name:           resolver.Name(),
@@ -226,18 +232,24 @@ func (c *ConfigurationManager) RunnerConfiguration(loadDockerVersion versionutil
 	return runnerConfig, nil
 }
 
-type RunnerInstance struct {
+// Instance represents a single runnable test instance
+// including all prerun scripts, test commands, and Docker
+// images to include in instance. This structure will be
+// serialized and placed inside the test runner container.
+type Instance struct {
 	RunConfiguration
 	CustomImages []CustomImage
 }
 
-type Resolver interface {
+// resolver is an interface for getting test configurations
+// from a configuration setting.
+type resolver interface {
 	Name() string
 	Path() string
 	BaseImage() reference.NamedTagged
 	Dind() bool
 	Images() []reference.NamedTagged
-	Instances() []RunnerInstance
+	Instances() []Instance
 }
 
 type flagResolver struct {
@@ -274,12 +286,12 @@ func (fr *flagResolver) Images() []reference.NamedTagged {
 	return nil
 }
 
-func (fr *flagResolver) Instances() []RunnerInstance {
+func (fr *flagResolver) Instances() []Instance {
 	customImages := make([]CustomImage, 0, len(fr.customImages))
 	for _, ci := range fr.customImages {
 		customImages = append(customImages, ci)
 	}
-	return []RunnerInstance{
+	return []Instance{
 		{
 			CustomImages: customImages,
 		},
@@ -312,15 +324,15 @@ func (dr defaultResolver) Images() []reference.NamedTagged {
 	return nil
 }
 
-func (dr defaultResolver) Instances() []RunnerInstance {
+func (dr defaultResolver) Instances() []Instance {
 	return nil
 }
 
 type multiResolver struct {
-	resolvers []Resolver
+	resolvers []resolver
 }
 
-func MultiResolver(resolver ...Resolver) Resolver {
+func newMultiResolver(resolver ...resolver) resolver {
 	return multiResolver{
 		resolvers: resolver,
 	}
@@ -380,7 +392,7 @@ func (mr multiResolver) Images() []reference.NamedTagged {
 	return images
 }
 
-func (mr multiResolver) Instances() []RunnerInstance {
+func (mr multiResolver) Instances() []Instance {
 	// TODO: Expand images when there are multiple values for a target
 	imageSet := map[string]CustomImage{}
 	runConfig := RunConfiguration{}
@@ -400,7 +412,7 @@ func (mr multiResolver) Instances() []RunnerInstance {
 	}
 	// TODO: Keep multiple instances
 	// TODO: Squash runconfigurations for potential duplicates
-	return []RunnerInstance{
+	return []Instance{
 		{
 			RunConfiguration: runConfig,
 			CustomImages:     images,
@@ -408,7 +420,10 @@ func (mr multiResolver) Instances() []RunnerInstance {
 	}
 }
 
-type ConfigurationSuite struct {
+// configurationSuite represents the configuration for
+// an entire test suite. The test suite may have multiple
+// instances
+type configurationSuite struct {
 	config suiteConfiguration
 
 	path         string
@@ -419,32 +434,32 @@ type ConfigurationSuite struct {
 	resolvedName string
 }
 
-func (cs *ConfigurationSuite) SetName(name string) {
+func (cs *configurationSuite) SetName(name string) {
 	cs.resolvedName = name
 }
 
-func (cs *ConfigurationSuite) Name() string {
+func (cs *configurationSuite) Name() string {
 	return cs.resolvedName
 }
 
-func (cs *ConfigurationSuite) Path() string {
+func (cs *configurationSuite) Path() string {
 	return cs.path
 }
 
-func (cs *ConfigurationSuite) BaseImage() reference.NamedTagged {
+func (cs *configurationSuite) BaseImage() reference.NamedTagged {
 	return cs.base
 }
 
-func (cs *ConfigurationSuite) Dind() bool {
+func (cs *configurationSuite) Dind() bool {
 	return cs.config.Dind
 }
 
-func (cs *ConfigurationSuite) Images() []reference.NamedTagged {
+func (cs *configurationSuite) Images() []reference.NamedTagged {
 	return cs.images
 }
-func (cs *ConfigurationSuite) Instances() []RunnerInstance {
+func (cs *configurationSuite) Instances() []Instance {
 	// TODO: Allow multiple instance configuration
-	runInstance := RunnerInstance{
+	runInstance := Instance{
 		CustomImages: cs.customImages,
 	}
 	for _, script := range cs.config.Pretest {
@@ -467,10 +482,10 @@ func (cs *ConfigurationSuite) Instances() []RunnerInstance {
 		})
 	}
 
-	return []RunnerInstance{runInstance}
+	return []Instance{runInstance}
 }
 
-func newSuiteConfiguration(path string, config suiteConfiguration) (*ConfigurationSuite, error) {
+func newSuiteConfiguration(path string, config suiteConfiguration) (*configurationSuite, error) {
 	customImages := make([]CustomImage, 0, len(config.CustomImages))
 	for _, value := range config.CustomImages {
 		ref, err := reference.Parse(value.Tag)
@@ -510,7 +525,7 @@ func newSuiteConfiguration(path string, config suiteConfiguration) (*Configurati
 		name = filepath.Base(path)
 	}
 
-	return &ConfigurationSuite{
+	return &configurationSuite{
 		config:       config,
 		path:         path,
 		base:         base,
@@ -533,8 +548,8 @@ func getNamedTagged(image string) (reference.NamedTagged, error) {
 	return named, nil
 }
 
-func ParseSuites(suites []string) (map[string]*ConfigurationSuite, error) {
-	configs := map[string]*ConfigurationSuite{}
+func parseSuites(suites []string) (map[string]*configurationSuite, error) {
+	configs := map[string]*configurationSuite{}
 	for _, suite := range suites {
 		logrus.Debugf("Handling suite %s", suite)
 		absPath, err := filepath.Abs(suite)

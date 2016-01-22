@@ -1,4 +1,4 @@
-// package versionutil provides utility functions
+// Package versionutil provides utility functions
 // for working with versions of Docker including
 // parsing, comparing, and retrieving information.
 package versionutil

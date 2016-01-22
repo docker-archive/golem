@@ -1,4 +1,4 @@
-package main
+package runner
 
 import (
 	"encoding/json"
@@ -17,6 +17,8 @@ import (
 	dockerclient "github.com/fsouza/go-dockerclient"
 )
 
+// SuiteRunnerConfiguration is the configuration for running
+// a test inside the suite instance container.
 type SuiteRunnerConfiguration struct {
 	DockerInDocker        bool
 	CleanDockerGraph      bool
@@ -31,18 +33,25 @@ type SuiteRunnerConfiguration struct {
 	TestCapturer     LogCapturer
 }
 
+// SuiteRunner is the runtime manager for the test
+// inside the suite instance container.
 type SuiteRunner struct {
 	config SuiteRunnerConfiguration
 
 	daemonCloser func() error
 }
 
+// NewSuiteRunner creates a new SuiteRunner with the provided
+// suite runner configuration.
 func NewSuiteRunner(config SuiteRunnerConfiguration) *SuiteRunner {
 	return &SuiteRunner{
 		config: config,
 	}
 }
 
+// Setup does the test setup for the suite. This includes importing
+// any docker images, running setup scripts, and starting the docker
+// daemon used by the tests.
 func (sr *SuiteRunner) Setup() error {
 	// Setup /var/lib/docker
 	if sr.config.DockerInDocker {
@@ -147,6 +156,8 @@ func (sr *SuiteRunner) Setup() error {
 	return nil
 }
 
+// TearDown releases on test resources and stops any running containers
+// docker daemon.
 func (sr *SuiteRunner) TearDown() (err error) {
 	if sr.config.DockerInDocker {
 		if sr.config.ComposeFile != "" {
@@ -166,6 +177,9 @@ func (sr *SuiteRunner) TearDown() (err error) {
 	return
 }
 
+// RunTests runs the tests in order, capturing any output to
+// the test capturer.
+// TODO: Parse output and send to a test result manager.
 func (sr *SuiteRunner) RunTests() error {
 	for _, runner := range sr.config.RunConfiguration.TestRunner {
 		cmd := exec.Command(runner.Command[0], runner.Command[1:]...)

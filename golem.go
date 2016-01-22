@@ -10,6 +10,7 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/golem/buildutil"
 	"github.com/docker/golem/clientutil"
+	"github.com/docker/golem/runner"
 	"github.com/docker/golem/versionutil"
 )
 
@@ -25,7 +26,7 @@ func main() {
 		buildCache   string
 	)
 	co := clientutil.NewClientOptions()
-	cm := NewConfigurationManager()
+	cm := runner.NewConfigurationManager()
 
 	// Move Docker Specific options to separate type
 	flag.StringVar(&dockerBinary, "db", "", "Docker binary to test")
@@ -53,10 +54,8 @@ func main() {
 			logrus.Fatalf("Error creating build cache directory")
 		}
 	}
-	c := CacheConfiguration{
-		ImageCache: &ImageCache{
-			root: filepath.Join(cacheDir, "images"),
-		},
+	c := runner.CacheConfiguration{
+		ImageCache: runner.NewImageCache(filepath.Join(cacheDir, "images")),
 		BuildCache: buildutil.NewFSBuildCache(buildCache),
 	}
 
@@ -73,7 +72,7 @@ func main() {
 		flag.Set("docker-version", v.String())
 	}
 
-	client, err := NewDockerClient(co)
+	client, err := runner.NewDockerClient(co)
 	if err != nil {
 		logrus.Fatalf("Failed to create client: %v", err)
 	}
@@ -96,13 +95,13 @@ func main() {
 	if err != nil {
 		logrus.Fatalf("Error creating runner configuration: %v", err)
 	}
-	runner := NewRunner(runnerConfig, c)
+	r := runner.NewRunner(runnerConfig, c)
 
-	if err := runner.Build(client); err != nil {
+	if err := r.Build(client); err != nil {
 		logrus.Fatalf("Error building test images: %v", err)
 	}
 
-	if err := runner.Run(client); err != nil {
+	if err := r.Run(client); err != nil {
 		logrus.Fatalf("Error running tests: %v", err)
 	}
 }
@@ -128,7 +127,7 @@ func runnerMain() {
 
 	// Check if has compose file
 	composeFile := "/runner/docker-compose.yml"
-	var composeCapturer LogCapturer
+	var composeCapturer runner.LogCapturer
 	if _, err := os.Stat(composeFile); err == nil {
 		composeCapturer = newFileCapturer("compose")
 		defer composeCapturer.Close()
@@ -142,7 +141,7 @@ func runnerMain() {
 	defer loadCapturer.Close()
 	daemonCapturer := newFileCapturer("daemon")
 	defer daemonCapturer.Close()
-	testCapturer := NewConsoleLogCapturer()
+	testCapturer := runner.NewConsoleLogCapturer()
 	defer testCapturer.Close()
 
 	instanceF, err := os.Open("/instance.json")
@@ -150,12 +149,12 @@ func runnerMain() {
 		logrus.Fatalf("Error opening instance file: %v", err)
 	}
 
-	var instanceConfig RunConfiguration
+	var instanceConfig runner.RunConfiguration
 	if err := json.NewDecoder(instanceF).Decode(&instanceConfig); err != nil {
 		logrus.Fatalf("Error decoding instance configuration: %v", err)
 	}
 
-	suiteConfig := SuiteRunnerConfiguration{
+	suiteConfig := runner.SuiteRunnerConfiguration{
 		DockerLoadLogCapturer: loadCapturer,
 		DockerLogCapturer:     daemonCapturer,
 
@@ -173,15 +172,15 @@ func runnerMain() {
 
 	}
 
-	runner := NewSuiteRunner(suiteConfig)
+	r := runner.NewSuiteRunner(suiteConfig)
 
-	if err := runner.Setup(); err != nil {
+	if err := r.Setup(); err != nil {
 		logrus.Fatalf("Setup error: %v", err)
 	}
 
-	runErr := runner.RunTests()
+	runErr := r.RunTests()
 
-	if err := runner.TearDown(); err != nil {
+	if err := r.TearDown(); err != nil {
 		logrus.Errorf("TearDown error: %v", err)
 	}
 
@@ -190,9 +189,9 @@ func runnerMain() {
 	}
 }
 
-func newFileCapturer(name string) LogCapturer {
+func newFileCapturer(name string) runner.LogCapturer {
 	basename := filepath.Join("/var/log/docker", name)
-	lc, err := NewFileLogCapturer(basename)
+	lc, err := runner.NewFileLogCapturer(basename)
 	if err != nil {
 		logrus.Fatalf("Error creating file capturer for %s: %v", basename, err)
 	}

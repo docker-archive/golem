@@ -19,6 +19,8 @@ const (
 	defaultClientKeyFilename  = "key.pem"
 )
 
+// ClientOptions represents all the docker client options needed
+// to initialize a client to talk to docker daemon.
 type ClientOptions struct {
 	parseL    sync.Mutex
 	parsed    bool
@@ -33,6 +35,8 @@ type ClientOptions struct {
 	clientKeyFile  string
 }
 
+// NewClientOptions creates a new ClientOptions struct
+// and registers cli flags to that struct.
 func NewClientOptions() *ClientOptions {
 	co := &ClientOptions{}
 	flag.StringVar(&co.daemonURL, "H", "", "Docker daemon socket/host to connect to")
@@ -135,26 +139,34 @@ func (co *ClientOptions) parse() {
 	}
 }
 
+// DaemonURL returns the url for the daemon which
+// the client will communicate.
 func (co *ClientOptions) DaemonURL() string {
 	co.parse()
 	return co.daemonURL
 }
 
+// TLSConfig returns the client tls configuration to the daemon
 func (co *ClientOptions) TLSConfig() *tls.Config {
 	co.parse()
 	return co.tlsConfig
 }
 
+// ClientCertFile is the client certificate to use when communicating
+// with the daemon.
 func (co *ClientOptions) ClientCertFile() string {
 	co.parse()
 	return co.clientCertFile
 }
 
+// ClientKeyFile is the private key for the client certificate
 func (co *ClientOptions) ClientKeyFile() string {
 	co.parse()
 	return co.clientKeyFile
 }
 
+// CACertFile is the certificate authority to use to validate
+// the daemon's TLS certificate.
 func (co *ClientOptions) CACertFile() string {
 	co.parse()
 	return co.caCertFile
