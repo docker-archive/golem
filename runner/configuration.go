@@ -142,6 +142,16 @@ func NewConfigurationManager() *ConfigurationManager {
 	return m
 }
 
+// CreateRunner creates a new test runner from a docker load version
+// and cache configuration.
+func (c *ConfigurationManager) CreateRunner(loadDockerVersion versionutil.Version, cache CacheConfiguration) (TestRunner, error) {
+	runConfig, err := c.runnerConfiguration(loadDockerVersion)
+	if err != nil {
+		return nil, err
+	}
+	return newRunner(runConfig, cache), nil
+}
+
 // runnerConfiguration creates a runnerConfiguration resolving all the
 // configurations from command line and provided configuration files.
 func (c *ConfigurationManager) runnerConfiguration(loadDockerVersion versionutil.Version) (runnerConfiguration, error) {
@@ -615,7 +625,7 @@ type pretestConfiguration struct {
 	Env     []string `toml:"env"`
 }
 
-type runnerConfiguration struct {
+type testRunConfiguration struct {
 	Command string   `toml:"command"`
 	Format  string   `toml:"format"`
 	Env     []string `toml:"env"`
@@ -639,7 +649,7 @@ type suiteConfiguration struct {
 	// Runner are the commands to run for the test. Each command
 	// must run without error for the suite to be considered passed.
 	// Each command may have a different output format.
-	Runner []runnerConfiguration `toml:"testrunner"`
+	Runner []testRunConfiguration `toml:"testrunner"`
 
 	// Images which should exist in the test container
 	// automatically set dind to true

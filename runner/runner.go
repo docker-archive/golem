@@ -79,6 +79,13 @@ type SuiteConfiguration struct {
 	Instances []InstanceConfiguration
 }
 
+// TestRunner defines an interface for building
+// and running a test.
+type TestRunner interface {
+	Build(DockerClient) error
+	Run(DockerClient) error
+}
+
 // runnerConfiguration is the configuration for
 // running a set of test suites. This configuration
 // determines which suites to run, how the base
@@ -106,9 +113,9 @@ type Runner struct {
 	cache  CacheConfiguration
 }
 
-// NewRunner creates a new runner from a runner
+// newRunner creates a new runner from a runner
 // and cache configuration.
-func NewRunner(config runnerConfiguration, cache CacheConfiguration) *Runner {
+func newRunner(config runnerConfiguration, cache CacheConfiguration) TestRunner {
 	return &Runner{
 		config: config,
 		cache:  cache,

@@ -91,11 +91,10 @@ func main() {
 	// TODO: Check cache here to ensure that load will not have issues
 	logrus.Debugf("Using docker daemon for image export, version %s", serverVersion)
 
-	runnerConfig, err := cm.RunnerConfiguration(serverVersion)
+	r, err := cm.CreateRunner(serverVersion, c)
 	if err != nil {
-		logrus.Fatalf("Error creating runner configuration: %v", err)
+		logrus.Fatalf("Error creating runner: %v", err)
 	}
-	r := runner.NewRunner(runnerConfig, c)
 
 	if err := r.Build(client); err != nil {
 		logrus.Fatalf("Error building test images: %v", err)
