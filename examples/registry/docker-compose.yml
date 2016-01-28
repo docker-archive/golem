@@ -25,6 +25,21 @@ registryv2:
   image: golem-distribution:latest
   ports:
     - "5000"
+registryv2token:
+  image: golem-distribution:latest
+  ports:
+    - "5554:5000"
+    - "5555:5000"
+  volumes:
+    - tokenserver/registry-config.yml:/etc/docker/registry/config.yml
+    - tokenserver/certs/localregistry.cert:/etc/docker/registry/localregistry.cert
+    - tokenserver/certs/localregistry.key:/etc/docker/registry/localregistry.key
+    - tokenserver/certs/signing.cert:/etc/docker/registry/tokenbundle.pem
+tokenserver:
+  build: "tokenserver"
+  command: "--debug -addr 0.0.0.0:5556 -issuer registry-test -passwd .htpasswd -tlscert tls.cert -tlskey tls.key -key sign.key -realm http://auth.localregistry:5556"
+  ports:
+    - "5556:5556"
 malevolent:
   build: "malevolent"
   command: "-l 0.0.0.0:6666 -r http://registryv2:5000 -c /certs/localregistry.cert -k /certs/localregistry.key"

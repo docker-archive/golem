@@ -17,15 +17,8 @@ function setup() {
 	fi
 }
 
-function build() {
-	docker build --no-cache -t $1 - <<DOCKERFILE
-FROM $image
-MAINTAINER derek@docker.com
-DOCKERFILE
-}
-
 function createAndPushImage() {
-	build $1
+	build $1 $image
 	docker push $1
 	docker rmi $1
 }

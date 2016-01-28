@@ -1,16 +1,15 @@
 #!/bin/sh
 set -e
 
-hostname=$1
-if [ "$hostname" = "" ]; then
-	hostname="localhost"
-fi
+hostname="localregistry"
+authhostname="auth.$hostname"
 
-if [ "$hostname" != "localhost" ]; then
+set_etc_hosts() {
+	hostentry=$1
 	IP=$(ifconfig eth0|grep "inet addr:"| cut -d: -f2 | awk '{ print $1}')
-	echo "$IP $hostname" >> /etc/hosts
+	echo "$IP $hostentry" >> /etc/hosts
 	# TODO: Check if record already exists in /etc/hosts
-fi
+}
 
 install_ca() {
 	mkdir -p $1/$hostname:$2
@@ -34,9 +33,20 @@ install_test_certs() {
 	install_ca $1 5448
 }
 
+set_etc_hosts $hostname
+set_etc_hosts $authhostname
+
 install_test_certs /etc/docker/certs.d
 install_test_certs /root/.docker/tls
 
 # Malevolent server
 mkdir -p /etc/docker/certs.d/$hostname:6666
 cp ./malevolent/certs/ca.pem /etc/docker/certs.d/$hostname:6666/ca.crt
+
+# Token server
+mkdir -p /etc/docker/certs.d/$hostname:5555
+cp ./tokenserver/certs/ca.pem /etc/docker/certs.d/$hostname:5555/ca.crt
+mkdir -p /etc/docker/certs.d/$hostname:5554
+cp ./tokenserver/certs/ca.pem /etc/docker/certs.d/$hostname:5554/ca.crt
+mkdir -p /etc/docker/certs.d/$hostname:5553
+cp ./tokenserver/certs/ca.pem /etc/docker/certs.d/$hostname:5553/ca.crt

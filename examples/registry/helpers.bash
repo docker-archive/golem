@@ -72,7 +72,18 @@ function basic_auth_version_check() {
 # requies bats
 function login() {
 	run docker login -u $user -p $password -e $email $1
+	if [ "$status" -ne 0 ]; then
+		echo $output
+	fi
 	[ "$status" -eq 0 ]
 	# First line is WARNING about credential save
 	[ "${lines[1]}" = "Login Succeeded" ]
+}
+
+# build reates a new docker image id from another image
+function build() {
+	docker build --no-cache -t $1 - <<DOCKERFILE
+FROM $2
+MAINTAINER distribution@docker.com
+DOCKERFILE
 }
