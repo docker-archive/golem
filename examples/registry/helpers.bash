@@ -48,7 +48,7 @@ function has_digest() {
 # requires bats
 function tempImage() {
 	dir=$(mktemp -d)
-	run dd if=/dev/random of="$dir/f" bs=1024 count=0 seek=16
+	run dd if=/dev/random of="$dir/f" bs=1024 count=512
 	cat <<DockerFileContent > "$dir/Dockerfile"
 FROM scratch
 COPY f /f

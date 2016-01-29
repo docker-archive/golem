@@ -172,3 +172,21 @@ function setup() {
 
 	[ "$id2" != "$truncid2" ]
 }
+
+@test "Test malevolent resumeable" {
+	# TODO: SKIP if less than 1.11-dev
+	imagename="$host/$base/resumeable"
+	image="$imagename:latest"
+	tempImage $image
+	run docker push $image
+	echo "$output"
+	[ "$status" -eq 0 ]
+	has_digest "$output"
+
+	# Remove image to ensure layer is pulled and digest verified
+	docker rmi -f $image
+
+	run docker pull "$imagename@$digest"
+	echo "$output"
+	[ "$status" -eq 0 ]
+}
