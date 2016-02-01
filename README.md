@@ -1,6 +1,6 @@
 # Golem Integration Test Runner
 
-The golem integration test runner is a flexible and robust way to run integration tests on top of Docker. It is designed for running tests which require complicated components such as proxies, databases, and docker. The test runner leverages docker's ability to run docker inside of a docker container and docker compose for orchastrating test components.
+The golem integration test runner is a flexible and robust way to run integration tests on top of Docker. It is designed for running tests which require complicated components such as proxies, databases, and docker. The test runner leverages docker's ability to run docker inside of a docker container and docker compose for orchestrating test components.
 
 ### Key Features
 - Leverages docker compose for setting up a test
