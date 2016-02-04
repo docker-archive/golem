@@ -49,8 +49,8 @@ func (m customImageMap) String() string {
 
 func (m customImageMap) Set(value string) error {
 	parts := strings.Split(value, ",")
-	if len(parts) != 2 {
-		return errors.New("invalid custome image format, expected \"name,reference\"")
+	if len(parts) < 2 || len(parts) > 3 {
+		return errors.New("invalid custom image format, expected \"name,reference[,version]\"")
 	}
 	ref, err := reference.Parse(parts[0])
 	if err != nil {
@@ -65,9 +65,21 @@ func (m customImageMap) Set(value string) error {
 		return err
 	}
 
+	var version string
+	if len(parts) == 3 {
+		version = parts[2]
+	} else if refTag, ok := source.(reference.Tagged); ok {
+		version = refTag.Tag()
+	} else {
+		// TODO: In this case is it better to leave it blank and use the default
+		// from the configuration file?
+		version = namedTagged.Tag()
+	}
+
 	m[parts[0]] = CustomImage{
-		Source: source.String(),
-		Target: namedTagged,
+		Source:  source.String(),
+		Target:  namedTagged,
+		Version: version,
 	}
 
 	return nil
@@ -507,9 +519,23 @@ func newSuiteConfiguration(path string, config suiteConfiguration) (*configurati
 			return nil, fmt.Errorf("expecting name:tag for image target, got %s", value.Tag)
 		}
 
+		version := value.Version
+		if version == "" {
+			version = target.Tag()
+
+			ref, err := reference.Parse(value.Default)
+			if err == nil {
+				if tagged, ok := ref.(reference.Tagged); ok {
+					version = tagged.Tag()
+				}
+			}
+
+		}
+
 		customImages = append(customImages, CustomImage{
-			Source: value.Default,
-			Target: target,
+			Source:  value.Default,
+			Target:  target,
+			Version: version,
 		})
 	}
 	images := make([]reference.NamedTagged, 0, len(config.Images))
@@ -614,6 +640,7 @@ func parseSuites(suites []string) (map[string]*configurationSuite, error) {
 type customimageConfiguration struct {
 	Tag     string `toml:"tag"`
 	Default string `toml:"default"`
+	Version string `toml:"version"`
 }
 
 type suitesConfiguration struct {
