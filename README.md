@@ -54,6 +54,13 @@ Each configuration file may specify multiple suite configuration.
     # default is the default image to use from docker instance which
     # is building the golem test containers
     default="registry:2.2.1"
+    # version is used to set an environment variable inside the running
+    # container which can be used to selectively run tests based on version.
+    # In this case the environment variable "GOLEM_DISTRIBUTION_VERSION" will
+    # be set to "2.2.1". The default value will either be a tag set on the
+    # source image for the tag, else the target image tag when the default has
+    # no tag.
+    version="2.2.1"
   [[suite.customimage]]
     tag="golem-registry:latest"
     default="registry:0.9.1"

@@ -455,8 +455,9 @@ func (ic *ImageCache) SaveImage(dgst digest.Digest, id string) error {
 // container with a given name and exported from another
 // Docker instance with the source image name.
 type CustomImage struct {
-	Source string
-	Target reference.NamedTagged
+	Source  string
+	Target  reference.NamedTagged
+	Version string
 }
 
 // CacheConfiguration represents a cache configuration for
@@ -474,11 +475,19 @@ const (
 	hashVersion = "1"
 )
 
+func nameToEnv(name string) string {
+	name = strings.Replace(name, ".", "_", -1)
+	name = strings.Replace(name, "-", "_", -1)
+	name = strings.Replace(name, ":", "_", -1)
+	return strings.ToUpper(name)
+}
+
 // BuildBaseImage builds a base image using the given configuration
 // and returns an image id for the given image
 func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheConfiguration) (string, error) {
 	tags := []tag{}
 	images := []string{}
+	envs := []string{}
 	for _, ref := range conf.ExtraImages {
 		id, err := ensureImage(client, ref.String())
 		if err != nil {
@@ -499,6 +508,8 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 			Tag:   ci.Target,
 			Image: id,
 		})
+
+		envs = append(envs, fmt.Sprintf("%s_VERSION %s", nameToEnv(ci.Target.Name()), ci.Version))
 
 		images = append(images, id)
 	}
@@ -527,6 +538,12 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 
 	fmt.Fprintln(dgstr.Hash(), conf.DockerLoadVersion.String())
 	fmt.Fprintln(dgstr.Hash(), conf.DockerVersion.String())
+
+	// Version environment variable
+	sort.Strings(envs)
+
+	fmt.Fprintln(dgstr.Hash())
+	fmt.Fprintln(dgstr.Hash(), strings.Join(envs, " "))
 
 	imageHash := dgstr.Digest()
 
@@ -576,6 +593,11 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 	}
 
 	fmt.Fprintln(df, "COPY ./images /images")
+
+	fmt.Fprintf(df, "ENV DOCKER_VERSION %s\n", conf.DockerVersion)
+	for _, e := range envs {
+		fmt.Fprintf(df, "ENV %s\n", e)
+	}
 
 	// Add Docker Binaries (docker test specific)
 	if err := c.BuildCache.InstallVersion(conf.DockerVersion, filepath.Join(td, "docker")); err != nil {
