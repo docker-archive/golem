@@ -43,6 +43,13 @@ function golem-docker-dev() {
   make binary
   version=`cat VERSION`
   path_restore
-  golem-docker $version $@
+
+  binary=$(readlink -f "$GOPATH/src/github.com/docker/docker/bundles/$version/binary/docker")
+  if [ ! -f $binary ]; then
+    echo "Failed to get binary for $version"
+    return 1
+  fi
+
+  golem -db $binary $@
 }
 
