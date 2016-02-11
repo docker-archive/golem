@@ -112,6 +112,74 @@ func (b blobChanger) addFile(rw http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (b blobChanger) resumeable(rw http.ResponseWriter, r *http.Request) {
+	recorder := httptest.NewRecorder()
+
+	b.Handler.ServeHTTP(recorder, r)
+
+	copyHeader(rw.Header(), recorder.Header())
+	rw.WriteHeader(recorder.Code)
+
+	if r := r.Header.Get("Range"); r == "" {
+
+		lStr := recorder.Header().Get("Content-Length")
+		if lStr == "" {
+			logrus.Errorf("Missing content length")
+			return
+		}
+		l, err := strconv.Atoi(lStr)
+		if err != nil {
+			logrus.Errorf("Invalid content length: %v", err)
+			return
+		}
+		if l != recorder.Body.Len() {
+			logrus.Errorf("Short body: got %d, expected %d", recorder.Body.Len(), l)
+			return
+		}
+		// Cutoff large files
+		if l >= 16*1024 {
+			defer func() {
+				hj := rw.(http.Hijacker)
+				conn, _, err := hj.Hijack()
+				if err != nil {
+					logrus.Errorf("Error hijacking connection: %v", err)
+					return
+				}
+
+				if err := conn.Close(); err != nil {
+					logrus.Errorf("Error closing hijacked connection: %v", err)
+				}
+			}()
+
+			writeSize := l / 2
+			logrus.Infof("Requested %d bytes, only sending %d", l, writeSize)
+
+			n, err := rw.Write(recorder.Body.Bytes()[:writeSize])
+			if err != nil {
+				logrus.Errorf("Error writing: %s", err)
+				return
+			}
+			if n != writeSize {
+				logrus.Errorf("Short write: wrote %d, expected %d", n, writeSize)
+			}
+			// Check flusher, flush
+			if fl, ok := rw.(http.Flusher); ok {
+				fl.Flush()
+			}
+			return
+		}
+		logrus.Infof("Sending whole body with size %d", l)
+	}
+	n, err := rw.Write(recorder.Body.Bytes())
+	if err != nil {
+		logrus.Errorf("Error writing: %s", err)
+		return
+	}
+	if n != recorder.Body.Len() {
+		logrus.Errorf("Short write: wrote %d, expected %d", n, recorder.Body.Len())
+	}
+}
+
 func (b blobChanger) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {
 		b.Handler.ServeHTTP(rw, r)
@@ -122,6 +190,8 @@ func (b blobChanger) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	switch operation {
 	case "addfile":
 		b.addFile(rw, r)
+	case "resumeable":
+		b.resumeable(rw, r)
 	default:
 		logrus.Infof("No blob operation for %q, passing through", operation)
 		b.Handler.ServeHTTP(rw, r)

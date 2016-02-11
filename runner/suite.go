@@ -186,7 +186,7 @@ func (sr *SuiteRunner) RunTests() error {
 		// TODO: Parse Stdout using sr.config.RunConfiguration.TestRunner.Format
 		cmd.Stdout = sr.config.TestCapturer.Stdout()
 		cmd.Stderr = sr.config.TestCapturer.Stderr()
-		cmd.Env = runner.Env
+		cmd.Env = append(os.Environ(), runner.Env...)
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("run error: %s", err)
 		}
