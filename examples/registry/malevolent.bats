@@ -173,8 +173,10 @@ function setup() {
 	[ "$id2" != "$truncid2" ]
 }
 
-@test "Test malevolent resumeable" {
-	# TODO: SKIP if less than 1.11-dev
+@test "Test malevolent resumeable pull" {
+	version_check docker "$DOCKER_VERSION" "1.11.0"
+	version_check registry "$GOLEM_DISTRIBUTION_VERSION" "2.3.0"
+
 	imagename="$host/$base/resumeable"
 	image="$imagename:latest"
 	tempImage $image

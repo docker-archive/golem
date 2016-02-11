@@ -80,6 +80,27 @@ function login() {
 	[ "${lines[1]}" = "Login Succeeded" ]
 }
 
+function parse_version() {
+	version=$(echo "$1" | cut -d '-' -f1) # Strip anything after '-'
+	major=$(echo "$version" | cut -d . -f1)
+	minor=$(echo "$version" | cut -d . -f2)
+	rev=$(echo "$version" | cut -d . -f3)
+
+	version=$((major * 1000 * 1000 + minor * 1000 + rev))
+}
+
+function version_check() {
+	name=$1
+	checkv=$2
+	minv=$3
+	parse_version "$checkv"
+	v=$version
+	parse_version "$minv"
+	if [ "$v" -lt "$version" ]; then
+		skip "$name version \"$checkv\" does not meet required version \"$minv\""
+	fi
+}
+
 # build reates a new docker image id from another image
 function build() {
 	docker build --no-cache -t $1 - <<DOCKERFILE
