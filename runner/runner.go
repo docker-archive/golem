@@ -226,7 +226,7 @@ func (r *Runner) Run(client DockerClient) error {
 				Cmd:        append([]string{fmt.Sprintf("/usr/bin/%s", r.config.ExecutableName)}, args...),
 				WorkingDir: "/runner",
 				Volumes: map[string]struct{}{
-					"/var/log/docker": struct{}{},
+					"/var/log/docker": {},
 				},
 				VolumeDriver: "local",
 			}
@@ -385,7 +385,7 @@ func saveTagMap(filename string, tags []tag) error {
 	defer mf.Close()
 
 	if err := json.NewEncoder(mf).Encode(m); err != nil {
-		return fmt.Errorf("error encoding tag map: %v")
+		return fmt.Errorf("error encoding tag map: %v", err)
 	}
 
 	return nil

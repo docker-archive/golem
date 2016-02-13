@@ -140,7 +140,7 @@ type ConfigurationManager struct {
 	suites        suites
 }
 
-// NewConfigurationManager creates a new configuraiton manager
+// NewConfigurationManager creates a new configuration manager
 // and registers associated flags.
 func NewConfigurationManager() *ConfigurationManager {
 	m := &ConfigurationManager{
