@@ -144,7 +144,8 @@ type ConfigurationManager struct {
 // and registers associated flags.
 func NewConfigurationManager() *ConfigurationManager {
 	m := &ConfigurationManager{
-		flagResolver: newFlagResolver(),
+		flagResolver:  newFlagResolver(),
+		dockerVersion: configurationVersion(versionutil.StaticVersion(1, 10, 1)),
 	}
 
 	// TODO: support extra images
