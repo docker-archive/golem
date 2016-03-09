@@ -75,6 +75,10 @@ func ParseVersion(s string) (v Version, err error) {
 	v.Tag = submatches[4]
 	v.Commit = submatches[5]
 
+	if v.Commit != "" {
+		v.Name = v.Name[0 : len(v.Name)-len(v.Commit)-1]
+	}
+
 	return
 }
 
