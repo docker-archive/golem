@@ -76,8 +76,8 @@ function login() {
 		echo $output
 	fi
 	[ "$status" -eq 0 ]
-	# First line is WARNING about credential save
-	[ "${lines[1]}" = "Login Succeeded" ]
+	# First line is WARNING about credential save or email deprecation (maybe both)
+	[ "${lines[2]}" = "Login Succeeded" -o "${lines[1]}" = "Login Succeeded" ]
 }
 
 function parse_version() {

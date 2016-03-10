@@ -14,8 +14,8 @@ base="hello-world"
 	echo $output
 	[ "$status" -eq 0 ]
 
-	# First line is WARNING about credential save
-	[ "${lines[1]}" = "Login Succeeded" ]
+	# First line is WARNING about credential save or email deprecation
+	[ "${lines[2]}" = "Login Succeeded" -o "${lines[1]}" = "Login Succeeded" ]
 }
 
 @test "Test token server bad login" {
