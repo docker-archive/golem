@@ -48,5 +48,7 @@ mkdir -p /etc/docker/certs.d/$hostname:5555
 cp ./tokenserver/certs/ca.pem /etc/docker/certs.d/$hostname:5555/ca.crt
 mkdir -p /etc/docker/certs.d/$hostname:5554
 cp ./tokenserver/certs/ca.pem /etc/docker/certs.d/$hostname:5554/ca.crt
-mkdir -p /etc/docker/certs.d/$hostname:5553
-cp ./tokenserver/certs/ca.pem /etc/docker/certs.d/$hostname:5553/ca.crt
+mkdir -p /etc/docker/certs.d/$hostname:5557
+cp ./tokenserver-oauth/certs/ca.pem /etc/docker/certs.d/$hostname:5557/ca.crt
+mkdir -p /etc/docker/certs.d/$hostname:5558
+cp ./tokenserver-oauth/certs/ca.pem /etc/docker/certs.d/$hostname:5558/ca.crt

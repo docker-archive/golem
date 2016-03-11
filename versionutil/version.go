@@ -49,7 +49,7 @@ func (v Version) downloadURL(os, arch string) string {
 }
 
 var (
-	versionRegexp = regexp.MustCompile(`v?([0-9]+).([0-9]+).([0-9]+)(?:-([a-z][a-z0-9]+))?(?:@([a-f0-9]+(?:-dirty)?))?`)
+	versionRegexp = regexp.MustCompile(`v?([0-9]+).([0-9]+).([0-9]+)(?:-([a-z][a-z0-9]+))*(?:@([a-f0-9]+(?:-dirty)?))?`)
 )
 
 // ParseVersion parses a version string as used by
