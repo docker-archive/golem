@@ -80,6 +80,12 @@ function login() {
 	[ "${lines[2]}" = "Login Succeeded" -o "${lines[1]}" = "Login Succeeded" ]
 }
 
+function login_oauth() {
+	login $@
+
+	grep -Pz "\"$1\": \\{[[:space:]]+\"auth\": \"[[:alnum:]]+\",[[:space:]]+\"identitytoken\"" ~/.docker/config.json
+}
+
 function parse_version() {
 	version=$(echo "$1" | cut -d '-' -f1) # Strip anything after '-'
 	major=$(echo "$version" | cut -d . -f1)
