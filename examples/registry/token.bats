@@ -51,10 +51,14 @@ base="hello-world"
 }
 
 @test "Test oauth token server login" {
+	version_check docker "$DOCKER_VERSION" "1.11.0"
+
 	login_oauth localregistry:5557
 }
 
 @test "Test oauth token server bad login" {
+	version_check docker "$DOCKER_VERSION" "1.11.0"
+
 	run docker login -u "testuser" -p "badpassword" -e $email localregistry:5557
 	[ "$status" -ne 0 ]
 
@@ -63,6 +67,8 @@ base="hello-world"
 }
 
 @test "Test oauth push and pull with token auth" {
+	version_check docker "$DOCKER_VERSION" "1.11.0"
+
 	login_oauth localregistry:5558
 	image="localregistry:5558/testuser/token"
 	build $image "$base:latest"
@@ -78,6 +84,8 @@ base="hello-world"
 }
 
 @test "Test oauth push and pull with token auth wrong namespace" {
+	version_check docker "$DOCKER_VERSION" "1.11.0"
+
 	login_oauth localregistry:5558
 	image="localregistry:5558/notuser/token"
 	build $image "$base:latest"
