@@ -21,6 +21,8 @@ registryv1:
   image: golem-registry:latest
   ports:
     - "5000"
+  volumes:
+    - ./v1_registry_config.yml:/docker-registry/config/config_sample.yml
 registryv2:
   image: golem-distribution:latest
   ports:
