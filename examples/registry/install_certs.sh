@@ -44,11 +44,7 @@ mkdir -p /etc/docker/certs.d/$hostname:6666
 cp ./malevolent/certs/ca.pem /etc/docker/certs.d/$hostname:6666/ca.crt
 
 # Token server
-mkdir -p /etc/docker/certs.d/$hostname:5555
-cp ./tokenserver/certs/ca.pem /etc/docker/certs.d/$hostname:5555/ca.crt
-mkdir -p /etc/docker/certs.d/$hostname:5554
-cp ./tokenserver/certs/ca.pem /etc/docker/certs.d/$hostname:5554/ca.crt
-mkdir -p /etc/docker/certs.d/$hostname:5557
-cp ./tokenserver-oauth/certs/ca.pem /etc/docker/certs.d/$hostname:5557/ca.crt
-mkdir -p /etc/docker/certs.d/$hostname:5558
-cp ./tokenserver-oauth/certs/ca.pem /etc/docker/certs.d/$hostname:5558/ca.crt
+install_file ./tokenserver/certs/ca.pem $1 5555
+install_file ./tokenserver/certs/ca.pem $1 5554
+install_file ./tokenserver/certs/ca.pem $1 5557
+install_file ./tokenserver/certs/ca.pem $1 5558
