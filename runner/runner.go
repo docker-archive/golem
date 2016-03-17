@@ -30,8 +30,7 @@ type BaseImageConfiguration struct {
 	ExtraImages  []reference.NamedTagged
 	CustomImages []CustomImage
 
-	DockerLoadVersion versionutil.Version
-	DockerVersion     versionutil.Version
+	DockerVersion versionutil.Version
 }
 
 // Script is the configuration for running a command
@@ -536,7 +535,6 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 
 	fmt.Fprintln(dgstr.Hash())
 
-	fmt.Fprintln(dgstr.Hash(), conf.DockerLoadVersion.String())
 	fmt.Fprintln(dgstr.Hash(), conf.DockerVersion.String())
 
 	// Version environment variable
@@ -603,11 +601,7 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 	if err := c.BuildCache.InstallVersion(conf.DockerVersion, filepath.Join(td, "docker")); err != nil {
 		return "", fmt.Errorf("error installing docker version %s: %v", conf.DockerVersion, err)
 	}
-	if err := c.BuildCache.InstallVersion(conf.DockerLoadVersion, filepath.Join(td, "docker-load")); err != nil {
-		return "", fmt.Errorf("error installing docker load version %s: %v", conf.DockerLoadVersion, err)
-	}
 	fmt.Fprintln(df, "COPY ./docker /usr/bin/docker")
-	fmt.Fprintln(df, "COPY ./docker-load /usr/bin/docker-load")
 	// TODO: Handle init files
 
 	// Call build

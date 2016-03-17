@@ -53,7 +53,14 @@ func NewSuiteRunner(config SuiteRunnerConfiguration) *SuiteRunner {
 // any docker images, running setup scripts, and starting the docker
 // daemon used by the tests.
 func (sr *SuiteRunner) Setup() error {
-	// Setup /var/lib/docker
+	// Run all setup scripts
+	for _, setupScript := range sr.config.RunConfiguration.Setup {
+		if err := RunScript(sr.config.SetupLogCapturer, setupScript); err != nil {
+			return fmt.Errorf("error running setup script %s: %s", setupScript.Command[0], err)
+		}
+	}
+
+	// Start Docker-in-Docker daemon for tests, build compose images
 	if sr.config.DockerInDocker {
 		// Check if empty
 		info, err := ioutil.ReadDir("/var/lib/docker")
@@ -65,7 +72,7 @@ func (sr *SuiteRunner) Setup() error {
 			// TODO: Clean if configuration is set
 			logrus.Debugf("/var/lib/docker is not clean")
 
-			loadVersion, err := versionutil.BinaryVersion("/usr/bin/docker-load")
+			loadVersion, err := versionutil.BinaryVersion("/usr/bin/docker")
 			if err != nil {
 				return err
 			}
@@ -75,12 +82,12 @@ func (sr *SuiteRunner) Setup() error {
 			}
 		}
 
-		// Load tag map
-		logrus.Debugf("Loading docker images")
-		pc, pk, err := StartDaemon("/usr/bin/docker-load", sr.config.DockerLoadLogCapturer)
+		logrus.Debugf("Starting daemon")
+		pc, k, err := StartDaemon("/usr/bin/docker", sr.config.DockerLogCapturer)
 		if err != nil {
-			return fmt.Errorf("error starting daemon: %v", err)
+			return fmt.Errorf("error starting daemon: %s", err)
 		}
+		sr.daemonCloser = k
 
 		// Remove all containers
 		containers, err := pc.ListContainers(dockerclient.ListContainersOptions{All: true})
@@ -103,38 +110,18 @@ func (sr *SuiteRunner) Setup() error {
 			return fmt.Errorf("error syncing images: %v", err)
 		}
 
-		logrus.Debugf("Stopping daemon")
-		if err := pk(); err != nil {
-			return fmt.Errorf("error killing daemon %v", err)
-		}
-	}
-
-	// Run all setup scripts
-	for _, setupScript := range sr.config.RunConfiguration.Setup {
-		if err := RunScript(sr.config.SetupLogCapturer, setupScript); err != nil {
-			return fmt.Errorf("error running setup script %s: %s", setupScript.Command[0], err)
-		}
-	}
-
-	// Start Docker-in-Docker daemon for tests, build compose images
-	if sr.config.DockerInDocker {
-		logrus.Debugf("Starting daemon")
-		_, k, err := StartDaemon("/usr/bin/docker", sr.config.DockerLogCapturer)
-		if err != nil {
-			return fmt.Errorf("error starting daemon: %s", err)
-		}
-		sr.daemonCloser = k
-
 		if sr.config.ComposeFile != "" {
 			logrus.Debugf("Build compose images")
 			buildScript := Script{
 				Command: []string{"docker-compose", "-f", sr.config.ComposeFile, "build", "--no-cache"},
+				Env:     os.Environ(),
 			}
 			if err := RunScript(sr.config.ComposeCapturer, buildScript); err != nil {
 				return fmt.Errorf("error running docker compose build: %v", err)
 			}
 			upScript := Script{
 				Command: []string{"docker-compose", "-f", sr.config.ComposeFile, "up", "-d"},
+				Env:     os.Environ(),
 			}
 
 			if err := RunScript(sr.config.ComposeCapturer, upScript); err != nil {
@@ -152,6 +139,8 @@ func (sr *SuiteRunner) Setup() error {
 			}()
 		}
 	}
+
+	// TODO: Run post-compose scripts, e.i. load saved images
 
 	return nil
 }
