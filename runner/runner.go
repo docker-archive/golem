@@ -15,8 +15,6 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/distribution/digest"
 	"github.com/docker/distribution/reference"
-	"github.com/docker/golem/buildutil"
-	"github.com/docker/golem/versionutil"
 	dockerclient "github.com/fsouza/go-dockerclient"
 	"github.com/termie/go-shutil"
 )
@@ -29,8 +27,6 @@ type BaseImageConfiguration struct {
 	Base         reference.Named
 	ExtraImages  []reference.NamedTagged
 	CustomImages []CustomImage
-
-	DockerVersion versionutil.Version
 }
 
 // Script is the configuration for running a command
@@ -156,10 +152,6 @@ func (r *Runner) Build(client DockerClient) error {
 
 			fmt.Fprintf(df, "FROM %s\n", baseImage)
 
-			// TODO: Move to base image
-			buildutil.CopyFile(r.config.ExecutablePath, filepath.Join(td, r.config.ExecutableName), 0755)
-			fmt.Fprintf(df, "COPY ./%s /usr/bin/%s\n", r.config.ExecutableName, r.config.ExecutableName)
-
 			logrus.Debugf("Copying %s to %s", suite.Path, filepath.Join(td, "runner"))
 			if err := shutil.CopyTree(suite.Path, filepath.Join(td, "runner"), nil); err != nil {
 				return fmt.Errorf("error copying test directory: %v", err)
@@ -222,7 +214,7 @@ func (r *Runner) Run(client DockerClient) error {
 
 			config := &dockerclient.Config{
 				Image:      r.imageName(suite.Name),
-				Cmd:        append([]string{fmt.Sprintf("/usr/bin/%s", r.config.ExecutableName)}, args...),
+				Cmd:        append([]string{r.config.ExecutableName}, args...),
 				WorkingDir: "/runner",
 				Volumes: map[string]struct{}{
 					"/var/log/docker": {},
@@ -460,11 +452,9 @@ type CustomImage struct {
 }
 
 // CacheConfiguration represents a cache configuration for
-// storing docker build version cache and a custome image
-// cache for locally built images.
+// custom image cache for locally built images.
 type CacheConfiguration struct {
 	ImageCache *ImageCache
-	BuildCache buildutil.BuildCache
 }
 
 const (
@@ -487,6 +477,12 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 	tags := []tag{}
 	images := []string{}
 	envs := []string{}
+
+	baseImageID, err := ensureImage(client, conf.Base.String())
+	if err != nil {
+		return "", err
+	}
+
 	for _, ref := range conf.ExtraImages {
 		id, err := ensureImage(client, ref.String())
 		if err != nil {
@@ -515,12 +511,9 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 
 	dgstr := digest.Canonical.New()
 	// Add runner options
-	fmt.Fprintf(dgstr.Hash(), "Version: %s\n", hashVersion)
-	fmt.Fprintln(dgstr.Hash())
-	fmt.Fprintln(dgstr.Hash())
+	fmt.Fprintf(dgstr.Hash(), "Version: %s\n\n", hashVersion)
 
-	// TODO: Incorporate image id
-	fmt.Fprintf(dgstr.Hash(), "%s\n\n", conf.Base.String())
+	fmt.Fprintf(dgstr.Hash(), "%s\n\n", baseImageID)
 
 	imageTags := map[string]string{}
 	allTags := []string{}
@@ -535,8 +528,6 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 
 	fmt.Fprintln(dgstr.Hash())
 
-	fmt.Fprintln(dgstr.Hash(), conf.DockerVersion.String())
-
 	// Version environment variable
 	sort.Strings(envs)
 
@@ -545,6 +536,7 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 
 	imageHash := dgstr.Digest()
 
+	// TODO: Use step by step image cache instead of single image cache
 	id, err := c.ImageCache.GetImage(imageHash)
 	if err == nil {
 		logrus.Debugf("Found image in cache for %s: %s", imageHash, id)
@@ -572,7 +564,7 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 	}
 	defer df.Close()
 
-	fmt.Fprintf(df, "FROM %s\n", conf.Base)
+	fmt.Fprintf(df, "FROM %s\n", baseImageID)
 
 	imagesDir := filepath.Join(td, "images")
 	if err := os.Mkdir(imagesDir, 0755); err != nil {
@@ -591,18 +583,6 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 	}
 
 	fmt.Fprintln(df, "COPY ./images /images")
-
-	fmt.Fprintf(df, "ENV DOCKER_VERSION %s\n", conf.DockerVersion)
-	for _, e := range envs {
-		fmt.Fprintf(df, "ENV %s\n", e)
-	}
-
-	// Add Docker Binaries (docker test specific)
-	if err := c.BuildCache.InstallVersion(conf.DockerVersion, filepath.Join(td, "docker")); err != nil {
-		return "", fmt.Errorf("error installing docker version %s: %v", conf.DockerVersion, err)
-	}
-	fmt.Fprintln(df, "COPY ./docker /usr/bin/docker")
-	// TODO: Handle init files
 
 	// Call build
 	builder, err := client.NewBuilder(td, "", "")
