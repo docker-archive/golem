@@ -55,7 +55,27 @@ COPY f /f
 
 CMD []
 DockerFileContent
-	docker build --no-cache -t $1 $dir
+
+	cp_t $dir "/tmpbuild/"
+	exec_t "cd /tmpbuild/; docker build --no-cache -t $1 .; rm -rf /tmpbuild/"
+}
+
+
+# helloImage creates a new image using the provided name
+# requires bats
+function helloImage() {
+	dir=$(mktemp -d)
+	cp ./hello $dir/hello
+	cat <<DockerFileContent > "$dir/Dockerfile"
+FROM scratch
+MAINTAINER distribution@docker.com
+COPY hello /hello
+
+CMD ["/hello"]
+DockerFileContent
+
+	cp_t $dir "/tmpbuild/"
+	exec_t "cd /tmpbuild/; docker build --no-cache -t $1 .; rm -rf /tmpbuild/"
 }
 
 # skip basic auth tests with Docker 1.6, where they don't pass due to
@@ -71,7 +91,7 @@ function basic_auth_version_check() {
 # uses user, password, and email variables set outside of function
 # requies bats
 function login() {
-	run docker login -u $user -p $password -e $email $1
+	run docker_t login -u $user -p $password -e $email $1
 	if [ "$status" -ne 0 ]; then
 		echo $output
 	fi
@@ -83,7 +103,9 @@ function login() {
 function login_oauth() {
 	login $@
 
-	grep -Pz "\"$1\": \\{[[:space:]]+\"auth\": \"[[:alnum:]]+\",[[:space:]]+\"identitytoken\"" ~/.docker/config.json
+	tmpFile=$(mktemp)
+	get_file_t /root/.docker/config.json $tmpFile
+	grep -Pz "\"$1\": \\{[[:space:]]+\"auth\": \"[[:alnum:]]+\",[[:space:]]+\"identitytoken\"" $tmpFile
 }
 
 function parse_version() {
@@ -107,9 +129,25 @@ function version_check() {
 	fi
 }
 
+function get_file_t() {
+	docker cp dockerdaemon:$1 $2
+}
+
+function cp_t() {
+	docker cp $1 dockerdaemon:$2
+}
+
+function exec_t() {
+	docker exec dockerdaemon sh -c "$@"
+}
+
+function docker_t() {
+	docker exec dockerdaemon docker $@
+}
+
 # build reates a new docker image id from another image
 function build() {
-	docker build --no-cache -t $1 - <<DOCKERFILE
+	docker exec -i dockerdaemon docker build --no-cache -t $1 - <<DOCKERFILE
 FROM $2
 MAINTAINER distribution@docker.com
 DOCKERFILE

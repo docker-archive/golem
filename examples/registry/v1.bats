@@ -7,20 +7,10 @@ load helpers
 hostname=${TEST_REGISTRY:-"localregistry"}
 host="$hostname:5011"
 
-repo="hello-world"
-tag="latest"
-image="${repo}:${tag}"
-
-function setup() {
-	if [ "$TEST_SKIP_PULL" == "" ]; then
-		docker pull $image
-	fi
-}
-
 function createAndPushImage() {
-	build $1 $image
-	docker push $1
-	docker rmi $1
+	helloImage $1
+	docker_t push $1
+	docker_t rmi $1
 }
 
 @test "Test v1 push and pull" {
@@ -29,19 +19,19 @@ function createAndPushImage() {
 	echo $output
 	[ "$status" -eq 0 ]
 
-	run docker pull $imagename
+	run docker_t pull $imagename
 	echo $output
 	[ "$status" -eq 0 ]
 
-	imageid1=$(docker images -q --no-trunc $imagename)
+	imageid1=$(docker_t images -q --no-trunc $imagename)
 
-	run docker rmi $imagename
+	run docker_t rmi $imagename
 	[ "$status" -eq 0 ]
 
-	run docker pull $imagename
+	run docker_t pull $imagename
 	[ "$status" -eq 0 ]
 
-	imageid2=$(docker images -q --no-trunc $imagename)
+	imageid2=$(docker_t images -q --no-trunc $imagename)
 	[ "$imageid1" == "$imageid2" ]
 }
 
@@ -51,20 +41,20 @@ function createAndPushImage() {
 	echo $output
 	[ "$status" -eq 0 ]
 
-	run docker pull $imagename
+	run docker_t pull $imagename
 	echo $output
 	[ "$status" -eq 0 ]
 
-	run docker images --no-trunc
+	run docker_t images --no-trunc
 	echo "$output"
 	[ "$status" -eq 0 ]
 	
-	run docker run $imagename
+	run docker_t run $imagename
 	[ "$status" -eq 0 ]
 
 	trimmed=$(echo -e "${output}" | cut -c1-17 | head -n 2 | tail -n 1)
 	echo "\"$trimmed\""
-	teststr="Hello from Docker"
+	teststr="Hello Golem!"
 	[ "$trimmed" == "$teststr" ]
 }
 

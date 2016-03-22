@@ -44,12 +44,26 @@ function golem-docker-dev() {
   version=`cat VERSION`
   path_restore
 
+
   binary=$(readlink -f "$GOPATH/src/github.com/docker/docker/bundles/$version/binary/docker")
   if [ ! -f $binary ]; then
     echo "Failed to get binary for $version"
     return 1
   fi
 
-  golem -db $binary $@
+  dir=$(mktemp -d)
+  path_save_cd $dir
+  trap path_restore EXIT
+  cp $binary ./docker
+  cat <<DockerFileContent > ./Dockerfile
+FROM docker:1.10.1-dind
+MAINTAINER distribution@docker.com
+COPY docker /usr/local/bin/docker
+DockerFileContent
+  # Build
+  image=$(docker build -q .)
+  path_restore
+
+  golem -i "golem-dind:latest,$image,$version" $@
 }
 

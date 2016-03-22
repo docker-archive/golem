@@ -17,11 +17,16 @@ import (
 	dockerclient "github.com/fsouza/go-dockerclient"
 )
 
+const (
+	timerKey = "elapsed"
+)
+
 // SuiteRunnerConfiguration is the configuration for running
 // a test inside the suite instance container.
 type SuiteRunnerConfiguration struct {
 	DockerInDocker        bool
 	CleanDockerGraph      bool
+	CleanImageCache       bool
 	DockerLoadLogCapturer LogCapturer
 	DockerLogCapturer     LogCapturer
 
@@ -53,35 +58,41 @@ func NewSuiteRunner(config SuiteRunnerConfiguration) *SuiteRunner {
 // any docker images, running setup scripts, and starting the docker
 // daemon used by the tests.
 func (sr *SuiteRunner) Setup() error {
-	// Setup /var/lib/docker
+	setupStart := time.Now()
+	// Run all setup scripts
+	for _, setupScript := range sr.config.RunConfiguration.Setup {
+		if err := RunScript(sr.config.SetupLogCapturer, setupScript); err != nil {
+			return fmt.Errorf("error running setup script %s: %s", setupScript.Command[0], err)
+		}
+	}
+
+	// Start Docker-in-Docker daemon for tests, build compose images
 	if sr.config.DockerInDocker {
-		// Check if empty
-		info, err := ioutil.ReadDir("/var/lib/docker")
-		if err != nil {
-			return fmt.Errorf("error reading /var/lib/docker: %v", err)
-		}
-
-		if len(info) != 0 {
-			// TODO: Clean if configuration is set
-			logrus.Debugf("/var/lib/docker is not clean")
-
-			loadVersion, err := versionutil.BinaryVersion("/usr/bin/docker-load")
+		if sr.config.CleanDockerGraph {
+			// Check if empty
+			info, err := ioutil.ReadDir("/var/lib/docker")
 			if err != nil {
-				return err
+				return fmt.Errorf("error reading /var/lib/docker: %v", err)
 			}
 
-			if err := cleanDockerGraph("/var/lib/docker", loadVersion); err != nil {
-				return err
+			for _, fInfo := range info {
+				cleanFile := filepath.Join("/var/lib/docker", fInfo.Name())
+				if err := os.RemoveAll(cleanFile); err != nil {
+					return fmt.Errorf("error cleaning %s: %s", cleanFile, err)
+				}
 			}
 		}
 
-		// Load tag map
-		logrus.Debugf("Loading docker images")
-		pc, pk, err := StartDaemon("/usr/bin/docker-load", sr.config.DockerLoadLogCapturer)
+		dockerStart := time.Now()
+		logrus.Debugf("Starting daemon")
+		pc, k, err := StartDaemon("/usr/bin/docker", sr.config.DockerLogCapturer)
 		if err != nil {
-			return fmt.Errorf("error starting daemon: %v", err)
+			return fmt.Errorf("error starting daemon: %s", err)
 		}
+		sr.daemonCloser = k
+		logrus.WithField(timerKey, time.Since(dockerStart)).Info("docker daemon startup complete")
 
+		cleanupStart := time.Now()
 		// Remove all containers
 		containers, err := pc.ListContainers(dockerclient.ListContainersOptions{All: true})
 		if err != nil {
@@ -99,47 +110,37 @@ func (sr *SuiteRunner) Setup() error {
 			}
 		}
 
-		if err := syncImages(pc, "/images"); err != nil {
+		if err := syncImages(pc, "/images", sr.config.CleanImageCache); err != nil {
 			return fmt.Errorf("error syncing images: %v", err)
 		}
-
-		logrus.Debugf("Stopping daemon")
-		if err := pk(); err != nil {
-			return fmt.Errorf("error killing daemon %v", err)
-		}
-	}
-
-	// Run all setup scripts
-	for _, setupScript := range sr.config.RunConfiguration.Setup {
-		if err := RunScript(sr.config.SetupLogCapturer, setupScript); err != nil {
-			return fmt.Errorf("error running setup script %s: %s", setupScript.Command[0], err)
-		}
-	}
-
-	// Start Docker-in-Docker daemon for tests, build compose images
-	if sr.config.DockerInDocker {
-		logrus.Debugf("Starting daemon")
-		_, k, err := StartDaemon("/usr/bin/docker", sr.config.DockerLogCapturer)
-		if err != nil {
-			return fmt.Errorf("error starting daemon: %s", err)
-		}
-		sr.daemonCloser = k
+		logrus.WithField(timerKey, time.Since(cleanupStart)).Info("image sync complete")
 
 		if sr.config.ComposeFile != "" {
 			logrus.Debugf("Build compose images")
+			buildStart := time.Now()
+			buildArgs := []string{"docker-compose", "-f", sr.config.ComposeFile, "build"}
+			if sr.config.CleanImageCache {
+				buildArgs = append(buildArgs, "--no-cache")
+			}
 			buildScript := Script{
-				Command: []string{"docker-compose", "-f", sr.config.ComposeFile, "build", "--no-cache"},
+				Command: buildArgs,
+				Env:     os.Environ(),
 			}
 			if err := RunScript(sr.config.ComposeCapturer, buildScript); err != nil {
 				return fmt.Errorf("error running docker compose build: %v", err)
 			}
+			logrus.WithField(timerKey, time.Since(buildStart)).Info("compose build complete")
+			logrus.Debugf("Starting compose containers")
+			upStart := time.Now()
 			upScript := Script{
 				Command: []string{"docker-compose", "-f", sr.config.ComposeFile, "up", "-d"},
+				Env:     os.Environ(),
 			}
 
 			if err := RunScript(sr.config.ComposeCapturer, upScript); err != nil {
 				return fmt.Errorf("error running docker compose up: %v", err)
 			}
+			logrus.WithField(timerKey, time.Since(upStart)).Info("compose up complete")
 
 			go func() {
 				logrus.Debugf("Listening for logs")
@@ -153,12 +154,15 @@ func (sr *SuiteRunner) Setup() error {
 		}
 	}
 
+	logrus.WithField(timerKey, time.Since(setupStart)).Info("setup complete")
+
 	return nil
 }
 
 // TearDown releases on test resources and stops any running containers
 // docker daemon.
 func (sr *SuiteRunner) TearDown() (err error) {
+	tearDownStart := time.Now()
 	if sr.config.DockerInDocker {
 		if sr.config.ComposeFile != "" {
 			stopScript := Script{
@@ -174,6 +178,8 @@ func (sr *SuiteRunner) TearDown() (err error) {
 		}
 	}
 
+	logrus.WithField(timerKey, time.Since(tearDownStart)).Info("teardown complete")
+
 	return
 }
 
@@ -181,6 +187,7 @@ func (sr *SuiteRunner) TearDown() (err error) {
 // the test capturer.
 // TODO: Parse output and send to a test result manager.
 func (sr *SuiteRunner) RunTests() error {
+	runnerStart := time.Now()
 	for _, runner := range sr.config.RunConfiguration.TestRunner {
 		cmd := exec.Command(runner.Command[0], runner.Command[1:]...)
 		// TODO: Parse Stdout using sr.config.RunConfiguration.TestRunner.Format
@@ -191,6 +198,8 @@ func (sr *SuiteRunner) RunTests() error {
 			return fmt.Errorf("run error: %s", err)
 		}
 	}
+
+	logrus.WithField(timerKey, time.Since(runnerStart)).Info("test runner complete")
 
 	return nil
 }
@@ -302,7 +311,7 @@ func listDiff(l1, l2 []string) ([]string, []string) {
 	return removed, added
 }
 
-func syncImages(client *dockerclient.Client, imageRoot string) error {
+func syncImages(client *dockerclient.Client, imageRoot string, clean bool) error {
 	logrus.Debugf("Syncing images from %s", imageRoot)
 	f, err := os.Open(filepath.Join(imageRoot, "images.json"))
 	if err != nil {
@@ -348,19 +357,25 @@ func syncImages(client *dockerclient.Client, imageRoot string) error {
 				// Check if this image tag conflicts with an expected
 				// tag, in which case force tag will update
 				if _, ok := allTags[t]; !ok {
-					logrus.Debugf("Removing tag %s", t)
-					if err := client.RemoveImage(t); err != nil {
-						return fmt.Errorf("error removing tag %s: %v", t, err)
+					if clean {
+						logrus.Debugf("Removing tag %s", t)
+						if err := client.RemoveImage(t); err != nil {
+							return fmt.Errorf("error removing tag %s: %v", t, err)
+						}
+					} else {
+						logrus.Debugf("Keeping tag: %s", t)
 					}
 				}
 			}
-		} else {
+		} else if clean {
 			removeOptions := dockerclient.RemoveImageOptions{
 				Force: true,
 			}
 			if err := client.RemoveImageExtended(img.ID, removeOptions); err != nil {
 				return fmt.Errorf("error moving image %s: %v", img.ID, err)
 			}
+		} else {
+			logrus.Debugf("Keeping image %s with tags %v", img.ID, img.RepoTags)
 		}
 
 	}
@@ -423,118 +438,4 @@ func tagImage(client *dockerclient.Client, img, tag string) error {
 	}
 
 	return nil
-}
-
-func removeIfExists(path string) error {
-	_, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	logrus.Debugf("Removing %s", path)
-	return os.Remove(path)
-}
-
-func cleanDockerGraph(graphDir string, v versionutil.Version) error {
-	logrus.Debugf("Cleaning for version %s", v)
-	// Handle migration files
-	migratedVersion := versionutil.StaticVersion(1, 10, 0)
-	migratedVersion.Tag = "dev"
-	if v.LessThan(migratedVersion) {
-
-		if err := removeIfExists(filepath.Join(graphDir, ".migration-v1-images.json")); err != nil {
-			return err
-		}
-		if err := removeIfExists(filepath.Join(graphDir, ".migration-v1-tags")); err != nil {
-			return err
-		}
-
-		root := filepath.Join(graphDir, "graph")
-		migrationPurger := func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-			if !info.IsDir() {
-				if strings.HasPrefix(filepath.Base(path), ".migrat") {
-					logrus.Debugf("Removing migration file %s", path)
-					if err := os.Remove(path); err != nil {
-						return err
-					}
-				}
-			}
-			return nil
-		}
-		if err := filepath.Walk(root, migrationPurger); err != nil {
-			return err
-		}
-
-		// Remove all containers
-		infos, err := ioutil.ReadDir(filepath.Join(graphDir, "containers"))
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-		drivers, err := getAllGraphDrivers(graphDir)
-		if err != nil {
-			return err
-		}
-		for _, info := range infos {
-			container := info.Name()
-			for _, graphDriver := range drivers {
-				if err := removeLayerGraphContent(container, "mount-id", graphDriver, graphDir); err != nil && !os.IsNotExist(err) {
-					return err
-				}
-				if err := removeLayerGraphContent(container, "init-id", graphDriver, graphDir); err != nil && !os.IsNotExist(err) {
-					return err
-				}
-			}
-			if err := os.RemoveAll(filepath.Join(graphDir, "containers", container)); err != nil {
-				return err
-			}
-		}
-		if err := os.RemoveAll(filepath.Join(graphDir, "image")); err != nil {
-			return err
-		}
-		if err := removeIfExists(filepath.Join(graphDir, "linkgraph.db")); err != nil {
-			return err
-		}
-
-		// TODO: Remove everything in graph driver directory which is not in graph
-	}
-
-	return nil
-}
-
-func removeLayerGraphContent(layerID, filename, graphDriver, root string) error {
-	layerRoot := filepath.Join(root, "image", graphDriver, "layerdb", "mounts", layerID)
-	graphIDBytes, err := ioutil.ReadFile(filepath.Join(layerRoot, filename))
-	if err != nil {
-		return err
-	}
-	removeDir := filepath.Join(root, graphDriver, strings.TrimSpace(string(graphIDBytes)))
-	logrus.Debugf("Removing graph directory %s", removeDir)
-	if err := os.RemoveAll(removeDir); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func getAllGraphDrivers(graphDir string) ([]string, error) {
-	infos, err := ioutil.ReadDir(graphDir)
-	if err != nil {
-		return nil, err
-	}
-	drivers := []string{}
-	for _, info := range infos {
-		name := info.Name()
-		if strings.HasPrefix(name, "repositories-") {
-			drivers = append(drivers, name[13:])
-		}
-	}
-	return drivers, nil
 }

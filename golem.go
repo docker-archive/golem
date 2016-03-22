@@ -59,6 +59,7 @@ func main() {
 		BuildCache: buildutil.NewFSBuildCache(buildCache),
 	}
 
+	var dockerVersion *versionutil.Version
 	if dockerBinary != "" {
 		v, err := versionutil.BinaryVersion(dockerBinary)
 		if err != nil {
@@ -69,7 +70,7 @@ func main() {
 			logrus.Fatalf("Error putting %s in cache as %s: %v", dockerBinary, v, err)
 		}
 
-		flag.Set("docker-version", v.String())
+		dockerVersion = &v
 	}
 
 	client, err := runner.NewDockerClient(co)
@@ -77,21 +78,25 @@ func main() {
 		logrus.Fatalf("Failed to create client: %v", err)
 	}
 
-	v, err := client.Version()
-	if err != nil {
-		logrus.Fatalf("Error getting version: %v", err)
+	if dockerVersion == nil {
+		v, err := client.Version()
+		if err != nil {
+			logrus.Fatalf("Error getting version: %v", err)
+		}
+
+		serverVersion, err := versionutil.ParseVersion(v.Get("Version"))
+		if err != nil {
+			logrus.Fatalf("Unexpected version value: %s", v.Get("Version"))
+		}
+		// TODO: Check cache here to ensure that load will not have issues
+		logrus.Debugf("Using docker daemon for image export, version %s", serverVersion)
+
+		dockerVersion = &serverVersion
 	}
 
-	serverVersion, err := versionutil.ParseVersion(v.Get("Version"))
-	if err != nil {
-		logrus.Fatalf("Unexpected version value: %s", v.Get("Version"))
-	}
-	// TODO: Support arbitrary load version instead of server version by
-	// starting up separate daemon for load
-	// TODO: Check cache here to ensure that load will not have issues
-	logrus.Debugf("Using docker daemon for image export, version %s", serverVersion)
+	// TODO(dmcgowan): Add warning when using <1.10, no content addressable identifiers
 
-	r, err := cm.CreateRunner(serverVersion, c)
+	r, err := cm.CreateRunner(*dockerVersion, c)
 	if err != nil {
 		logrus.Fatalf("Error creating runner: %v", err)
 	}
@@ -133,6 +138,7 @@ func runnerMain() {
 	} else {
 		logrus.Debugf("No compose file found at %s", composeFile)
 	}
+	logrus.Debugf("Environment: %#v", os.Environ())
 
 	scriptCapturer := newFileCapturer("scripts")
 	defer scriptCapturer.Close()

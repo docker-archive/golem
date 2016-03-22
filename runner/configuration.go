@@ -135,21 +135,18 @@ func (s suites) Set(value string) error {
 // ConfigurationManager manages flags and resolving configuration
 // settings into a runner configuration.
 type ConfigurationManager struct {
-	flagResolver  *flagResolver
-	dockerVersion configurationVersion
-	suites        suites
+	flagResolver *flagResolver
+	suites       suites
 }
 
 // NewConfigurationManager creates a new configuration manager
 // and registers associated flags.
 func NewConfigurationManager() *ConfigurationManager {
 	m := &ConfigurationManager{
-		flagResolver:  newFlagResolver(),
-		dockerVersion: configurationVersion(versionutil.StaticVersion(1, 10, 1)),
+		flagResolver: newFlagResolver(),
 	}
 
 	// TODO: support extra images
-	flag.Var(&m.dockerVersion, "docker-version", "Docker version to test")
 	flag.Var(m.suites, "s", "Path to test suite to run")
 
 	return m
@@ -157,8 +154,8 @@ func NewConfigurationManager() *ConfigurationManager {
 
 // CreateRunner creates a new test runner from a docker load version
 // and cache configuration.
-func (c *ConfigurationManager) CreateRunner(loadDockerVersion versionutil.Version, cache CacheConfiguration) (TestRunner, error) {
-	runConfig, err := c.runnerConfiguration(loadDockerVersion)
+func (c *ConfigurationManager) CreateRunner(dockerVersion versionutil.Version, cache CacheConfiguration) (TestRunner, error) {
+	runConfig, err := c.runnerConfiguration(dockerVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +164,7 @@ func (c *ConfigurationManager) CreateRunner(loadDockerVersion versionutil.Versio
 
 // runnerConfiguration creates a runnerConfiguration resolving all the
 // configurations from command line and provided configuration files.
-func (c *ConfigurationManager) runnerConfiguration(loadDockerVersion versionutil.Version) (runnerConfiguration, error) {
+func (c *ConfigurationManager) runnerConfiguration(dockerVersion versionutil.Version) (runnerConfiguration, error) {
 	// TODO: eliminate suites and just use arguments
 	var conf string
 	// Get first flag
@@ -225,10 +222,9 @@ func (c *ConfigurationManager) runnerConfiguration(loadDockerVersion versionutil
 		}
 
 		baseConf := BaseImageConfiguration{
-			Base:              resolver.BaseImage(),
-			ExtraImages:       resolver.Images(),
-			DockerLoadVersion: loadDockerVersion,
-			DockerVersion:     versionutil.Version(c.dockerVersion),
+			Base:          resolver.BaseImage(),
+			ExtraImages:   resolver.Images(),
+			DockerVersion: dockerVersion,
 		}
 
 		instances := resolver.Instances()
