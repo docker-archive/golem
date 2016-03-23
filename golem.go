@@ -20,13 +20,15 @@ func main() {
 		return
 	}
 	var (
-		cacheDir string
+		cacheDir    string
+		startDaemon bool
 	)
 
 	co := clientutil.NewClientOptions()
 	cm := runner.NewConfigurationManager()
 
 	flag.StringVar(&cacheDir, "cache", "", "Cache directory")
+	flag.BoolVar(&startDaemon, "rundaemon", false, "Start daemon")
 	// TODO: Add swarm flag and host option
 
 	flag.Parse()
@@ -47,9 +49,21 @@ func main() {
 		ImageCache: runner.NewImageCache(filepath.Join(cacheDir, "images")),
 	}
 
-	client, err := runner.NewDockerClient(co)
-	if err != nil {
-		logrus.Fatalf("Failed to create client: %v", err)
+	var client runner.DockerClient
+	if startDaemon {
+		logger := runner.NewConsoleLogCapturer()
+		c, shutdown, err := runner.StartDaemon("docker", logger)
+		if err != nil {
+			logrus.Fatalf("Error starting deamon: %v", err)
+		}
+		defer shutdown()
+		client = c
+	} else {
+		c, err := runner.NewDockerClient(co)
+		if err != nil {
+			logrus.Fatalf("Failed to create client: %v", err)
+		}
+		client = c
 	}
 
 	// require running on docker 1.10 to ensure content addressable

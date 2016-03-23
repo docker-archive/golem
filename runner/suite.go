@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/distribution/reference"
+	"github.com/docker/golem/clientutil"
 	"github.com/docker/golem/versionutil"
 	dockerclient "github.com/fsouza/go-dockerclient"
 )
@@ -219,11 +220,11 @@ func RunScript(lc LogCapturer, script Script) error {
 
 // StartDaemon starts a daemon using the provided binary returning
 // a client to the binary, a close function, and error.
-func StartDaemon(binary string, lc LogCapturer) (*dockerclient.Client, func() error, error) {
+func StartDaemon(binary string, lc LogCapturer) (DockerClient, func() error, error) {
 	// Get Docker version of process
 	previousVersion, err := versionutil.BinaryVersion(binary)
 	if err != nil {
-		return nil, nil, fmt.Errorf("could not get binary version: %s", err)
+		return DockerClient{}, nil, fmt.Errorf("could not get binary version: %s", err)
 	}
 
 	logrus.Debugf("Starting daemon with %s", binary)
@@ -239,7 +240,7 @@ func StartDaemon(binary string, lc LogCapturer) (*dockerclient.Client, func() er
 	cmd.Stdout = lc.Stdout()
 	cmd.Stderr = lc.Stderr()
 	if err := cmd.Start(); err != nil {
-		return nil, nil, fmt.Errorf("could not start daemon: %s", err)
+		return DockerClient{}, nil, fmt.Errorf("could not start daemon: %s", err)
 	}
 
 	logrus.Debugf("Waiting for daemon to start")
@@ -247,7 +248,7 @@ func StartDaemon(binary string, lc LogCapturer) (*dockerclient.Client, func() er
 
 	client, err := dockerclient.NewClientFromEnv()
 	if err != nil {
-		return nil, nil, fmt.Errorf("could not initialize client: %s", err)
+		return DockerClient{}, nil, fmt.Errorf("could not initialize client: %s", err)
 	}
 
 	// Wait for it to start
@@ -271,7 +272,7 @@ func StartDaemon(binary string, lc LogCapturer) (*dockerclient.Client, func() er
 		return os.RemoveAll("/var/run/docker.pid")
 	}
 
-	return client, kill, nil
+	return DockerClient{Client: client, options: &clientutil.ClientOptions{}}, kill, nil
 }
 
 type tagMap map[string][]string
@@ -311,7 +312,7 @@ func listDiff(l1, l2 []string) ([]string, []string) {
 	return removed, added
 }
 
-func syncImages(client *dockerclient.Client, imageRoot string, clean bool) error {
+func syncImages(client DockerClient, imageRoot string, clean bool) error {
 	logrus.Debugf("Syncing images from %s", imageRoot)
 	f, err := os.Open(filepath.Join(imageRoot, "images.json"))
 	if err != nil {
@@ -419,7 +420,7 @@ func filterRepoTags(tags []string) []string {
 	return filtered
 }
 
-func tagImage(client *dockerclient.Client, img, tag string) error {
+func tagImage(client DockerClient, img, tag string) error {
 	ref, err := reference.Parse(tag)
 	if err != nil {
 		return fmt.Errorf("invalid tag %s: %v", tag, err)
