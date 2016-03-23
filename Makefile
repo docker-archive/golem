@@ -4,7 +4,7 @@ DOCKER=docker
 NAMESPACE=distribution
 GOFILES=golem.go $(wildcard **/*.go)
 
-.PHONY: builderimage baseimage batsimage golangimage fmt lint vet binaries build install clean all
+.PHONY: builderimage baseimage batsimage golangimage golemimage fmt lint vet binaries build install clean all
 .DEFAULT: all
 all: fmt lint vet binaries
 
@@ -35,6 +35,10 @@ golangimage: baseimage
 	@echo "+ $@"
 	cd $(BASEDIR);\
 	$(DOCKER) build -f Dockerfile.golang -t $(NAMESPACE)/golem-runner:golang  .
+
+golemimage: $(BASEDIR)/golem
+	cd $(BASEDIR);\
+	$(DOCKER) build -f Dockerfile -t $(NAMESPACE)/golem:latest  .
 
 fmt:
 	@echo "+ $@"
