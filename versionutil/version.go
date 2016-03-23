@@ -29,25 +29,6 @@ func (v Version) String() string {
 	return s
 }
 
-func (v Version) downloadURL(os, arch string) string {
-	// downloadLocation
-	// Install release
-	// https://get.docker.com/builds/Linux/x86_64/docker-1.9.0
-	// Install non release
-	// https://test.docker.com/builds/Linux/x86_64/docker-1.9.0-rc5
-	// Install experimental
-	// https://experimental.docker.com/builds/Linux/x86_64/docker-latest
-	if v.Tag == "" {
-		return fmt.Sprintf("https://get.docker.com/builds/%s/%s/docker-%d.%d.%d", os, arch, v.VersionNumber[0], v.VersionNumber[1], v.VersionNumber[2])
-	}
-	if strings.HasPrefix(v.Tag, "rc") {
-		return fmt.Sprintf("https://test.docker.com/builds/%s/%s/docker-%d.%d.%d-%s", os, arch, v.VersionNumber[0], v.VersionNumber[1], v.VersionNumber[2], v.Tag)
-	}
-
-	return ""
-
-}
-
 var (
 	versionRegexp = regexp.MustCompile(`v?([0-9]+).([0-9]+).([0-9]+)(?:-([a-z][a-z0-9]+))*(?:@([a-f0-9]+(?:-dirty)?))?`)
 )

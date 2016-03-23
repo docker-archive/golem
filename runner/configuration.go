@@ -32,7 +32,7 @@ func init() {
 	}
 
 	globalDefault = defaultResolver{
-		base: assertTagged("dmcgowan/golem:latest"),
+		base: assertTagged("distribution/golem-runner:0.1-bats"),
 		path: cwd,
 	}
 }
@@ -154,8 +154,8 @@ func NewConfigurationManager() *ConfigurationManager {
 
 // CreateRunner creates a new test runner from a docker load version
 // and cache configuration.
-func (c *ConfigurationManager) CreateRunner(dockerVersion versionutil.Version, cache CacheConfiguration) (TestRunner, error) {
-	runConfig, err := c.runnerConfiguration(dockerVersion)
+func (c *ConfigurationManager) CreateRunner(cache CacheConfiguration) (TestRunner, error) {
+	runConfig, err := c.runnerConfiguration()
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +164,7 @@ func (c *ConfigurationManager) CreateRunner(dockerVersion versionutil.Version, c
 
 // runnerConfiguration creates a runnerConfiguration resolving all the
 // configurations from command line and provided configuration files.
-func (c *ConfigurationManager) runnerConfiguration(dockerVersion versionutil.Version) (runnerConfiguration, error) {
+func (c *ConfigurationManager) runnerConfiguration() (runnerConfiguration, error) {
 	// TODO: eliminate suites and just use arguments
 	var conf string
 	// Get first flag
@@ -222,9 +222,8 @@ func (c *ConfigurationManager) runnerConfiguration(dockerVersion versionutil.Ver
 		}
 
 		baseConf := BaseImageConfiguration{
-			Base:          resolver.BaseImage(),
-			ExtraImages:   resolver.Images(),
-			DockerVersion: dockerVersion,
+			Base:        resolver.BaseImage(),
+			ExtraImages: resolver.Images(),
 		}
 
 		instances := resolver.Instances()
@@ -393,7 +392,7 @@ func (mr multiResolver) Dind() bool {
 			return true
 		}
 	}
-	return false
+	return len(mr.Images()) > 0
 }
 
 func (mr multiResolver) Images() []reference.NamedTagged {

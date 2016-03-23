@@ -41,7 +41,7 @@ func TestVersionParsing(t *testing.T) {
 		{
 			Test: "v0.8.1-dev@aaffbb1234",
 			Expected: Version{
-				Name:          "v0.8.1-dev@aaffbb1234",
+				Name:          "v0.8.1-dev",
 				VersionNumber: [3]int{0, 8, 1},
 				Tag:           "dev",
 				Commit:        "aaffbb1234",

@@ -41,7 +41,8 @@ function load_image() {
 function has_digest() {
 	filtered=$(echo "$1" |sed -rn '/[dD]igest\: sha(256|384|512)/ p')
 	[ "$filtered" != "" ]
-	digest=$(expr "$filtered" : ".*\(sha\(256\|384\|512\):[a-z0-9]*\)")
+	# See http://wiki.alpinelinux.org/wiki/Regex#BREs before making changes to regex
+	digest=$(expr "$filtered" : ".*\(sha[0-9]\{3,3\}:[a-z0-9]*\)")
 }
 
 # tempImage creates a new image using the provided name

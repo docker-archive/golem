@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/docker/golem/buildutil"
 	"github.com/docker/golem/clientutil"
 	"github.com/docker/golem/runner"
 	"github.com/docker/golem/versionutil"
@@ -21,17 +20,13 @@ func main() {
 		return
 	}
 	var (
-		dockerBinary string
-		cacheDir     string
-		buildCache   string
+		cacheDir string
 	)
+
 	co := clientutil.NewClientOptions()
 	cm := runner.NewConfigurationManager()
 
-	// Move Docker Specific options to separate type
-	flag.StringVar(&dockerBinary, "db", "", "Docker binary to test")
 	flag.StringVar(&cacheDir, "cache", "", "Cache directory")
-	flag.StringVar(&buildCache, "build-cache", "", "Build cache location, if outside of default cache directory")
 	// TODO: Add swarm flag and host option
 
 	flag.Parse()
@@ -40,7 +35,7 @@ func main() {
 	logrus.SetLevel(logrus.DebugLevel)
 
 	if cacheDir == "" {
-		td, err := ioutil.TempDir("", "build-cache-")
+		td, err := ioutil.TempDir("", "golem-cache-")
 		if err != nil {
 			logrus.Fatalf("Error creating tempdir: %v", err)
 		}
@@ -48,29 +43,8 @@ func main() {
 		defer os.RemoveAll(td)
 	}
 
-	if buildCache == "" {
-		buildCache = filepath.Join(cacheDir, "builds")
-		if err := os.MkdirAll(buildCache, 0755); err != nil {
-			logrus.Fatalf("Error creating build cache directory")
-		}
-	}
 	c := runner.CacheConfiguration{
 		ImageCache: runner.NewImageCache(filepath.Join(cacheDir, "images")),
-		BuildCache: buildutil.NewFSBuildCache(buildCache),
-	}
-
-	var dockerVersion *versionutil.Version
-	if dockerBinary != "" {
-		v, err := versionutil.BinaryVersion(dockerBinary)
-		if err != nil {
-			logrus.Fatalf("Error getting binary version of %s: %v", dockerBinary, err)
-		}
-		logrus.Debugf("Using local binary with version %s", v.String())
-		if err := c.BuildCache.PutVersion(v, dockerBinary); err != nil {
-			logrus.Fatalf("Error putting %s in cache as %s: %v", dockerBinary, v, err)
-		}
-
-		dockerVersion = &v
 	}
 
 	client, err := runner.NewDockerClient(co)
@@ -78,25 +52,13 @@ func main() {
 		logrus.Fatalf("Failed to create client: %v", err)
 	}
 
-	if dockerVersion == nil {
-		v, err := client.Version()
-		if err != nil {
-			logrus.Fatalf("Error getting version: %v", err)
-		}
-
-		serverVersion, err := versionutil.ParseVersion(v.Get("Version"))
-		if err != nil {
-			logrus.Fatalf("Unexpected version value: %s", v.Get("Version"))
-		}
-		// TODO: Check cache here to ensure that load will not have issues
-		logrus.Debugf("Using docker daemon for image export, version %s", serverVersion)
-
-		dockerVersion = &serverVersion
+	// require running on docker 1.10 to ensure content addressable
+	// image identifiers are used
+	if err := client.CheckServerVersion(versionutil.StaticVersion(1, 10, 0)); err != nil {
+		logrus.Fatal(err)
 	}
 
-	// TODO(dmcgowan): Add warning when using <1.10, no content addressable identifiers
-
-	r, err := cm.CreateRunner(*dockerVersion, c)
+	r, err := cm.CreateRunner(c)
 	if err != nil {
 		logrus.Fatalf("Error creating runner: %v", err)
 	}

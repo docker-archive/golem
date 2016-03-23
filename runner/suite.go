@@ -85,7 +85,7 @@ func (sr *SuiteRunner) Setup() error {
 
 		dockerStart := time.Now()
 		logrus.Debugf("Starting daemon")
-		pc, k, err := StartDaemon("/usr/bin/docker", sr.config.DockerLogCapturer)
+		pc, k, err := StartDaemon("docker", sr.config.DockerLogCapturer)
 		if err != nil {
 			return fmt.Errorf("error starting daemon: %s", err)
 		}
