@@ -584,6 +584,10 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 
 	fmt.Fprintln(df, "COPY ./images /images")
 
+	for _, e := range envs {
+		fmt.Fprintf(df, "ENV %s\n", e)
+	}
+
 	// Call build
 	builder, err := client.NewBuilder(td, "", "")
 	if err != nil {
