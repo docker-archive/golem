@@ -199,7 +199,7 @@ func (sr *SuiteRunner) RunTests() error {
 		}
 	}
 
-	logrus.WithField(timerKey, time.Since(runnerStart)).Info("test runner complete")
+	logrus.WithField(timerKey, time.Since(runnerStart)).Info("suite runner complete")
 
 	return nil
 }
