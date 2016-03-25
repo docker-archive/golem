@@ -37,6 +37,7 @@ func init() {
 	}
 }
 
+// TODO: Just make this an array, no need to de-duplicate here
 type customImageMap map[string]CustomImage
 
 func (m customImageMap) String() string {
@@ -76,7 +77,8 @@ func (m customImageMap) Set(value string) error {
 		version = namedTagged.Tag()
 	}
 
-	m[parts[0]] = CustomImage{
+	key := fmt.Sprintf("%s,%s", parts[0], parts[1])
+	m[key] = CustomImage{
 		Source:  source.String(),
 		Target:  namedTagged,
 		Version: version,
@@ -226,20 +228,28 @@ func (c *ConfigurationManager) runnerConfiguration() (runnerConfiguration, error
 			ExtraImages: resolver.Images(),
 		}
 
-		instances := resolver.Instances()
+		runConfig := resolver.RunConfiguration()
+		imageMatrix := expandCustomImageMatrix(resolver.CustomImages())
 
-		for idx, instance := range instances {
+		var multiInstance bool
+		if len(imageMatrix) > 1 {
+			logrus.Debugf("Running %d instance for suite %s", len(imageMatrix), registrySuite.Name)
+			multiInstance = true
+		}
+
+		for idx, customImages := range imageMatrix {
 			name := registrySuite.Name
-			if len(instances) > 1 {
+			if multiInstance {
+				logrus.Debugf("Instance %d: %v", idx+1, customImages)
 				name = fmt.Sprintf("%s-%d", name, idx+1)
 			}
 			imageConf := baseConf
-			imageConf.CustomImages = instance.CustomImages
+			imageConf.CustomImages = customImages
 
 			conf := InstanceConfiguration{
 				Name:             name,
 				BaseImage:        imageConf,
-				RunConfiguration: instance.RunConfiguration,
+				RunConfiguration: runConfig,
 			}
 			registrySuite.Instances = append(registrySuite.Instances, conf)
 		}
@@ -250,15 +260,6 @@ func (c *ConfigurationManager) runnerConfiguration() (runnerConfiguration, error
 	return runnerConfig, nil
 }
 
-// Instance represents a single runnable test instance
-// including all prerun scripts, test commands, and Docker
-// images to include in instance. This structure will be
-// serialized and placed inside the test runner container.
-type Instance struct {
-	RunConfiguration
-	CustomImages []CustomImage
-}
-
 // resolver is an interface for getting test configurations
 // from a configuration setting.
 type resolver interface {
@@ -267,7 +268,8 @@ type resolver interface {
 	BaseImage() reference.NamedTagged
 	Dind() bool
 	Images() []reference.NamedTagged
-	Instances() []Instance
+	RunConfiguration() RunConfiguration
+	CustomImages() []CustomImage
 }
 
 type flagResolver struct {
@@ -304,16 +306,16 @@ func (fr *flagResolver) Images() []reference.NamedTagged {
 	return nil
 }
 
-func (fr *flagResolver) Instances() []Instance {
+func (fr *flagResolver) RunConfiguration() RunConfiguration {
+	return RunConfiguration{}
+}
+
+func (fr *flagResolver) CustomImages() []CustomImage {
 	customImages := make([]CustomImage, 0, len(fr.customImages))
 	for _, ci := range fr.customImages {
 		customImages = append(customImages, ci)
 	}
-	return []Instance{
-		{
-			CustomImages: customImages,
-		},
-	}
+	return customImages
 }
 
 // defaultResolver is used to inject defaults
@@ -342,7 +344,11 @@ func (dr defaultResolver) Images() []reference.NamedTagged {
 	return nil
 }
 
-func (dr defaultResolver) Instances() []Instance {
+func (dr defaultResolver) RunConfiguration() RunConfiguration {
+	return RunConfiguration{}
+}
+
+func (dr defaultResolver) CustomImages() []CustomImage {
 	return nil
 }
 
@@ -410,32 +416,46 @@ func (mr multiResolver) Images() []reference.NamedTagged {
 	return images
 }
 
-func (mr multiResolver) Instances() []Instance {
-	// TODO: Expand images when there are multiple values for a target
-	imageSet := map[string]CustomImage{}
+func (mr multiResolver) RunConfiguration() RunConfiguration {
 	runConfig := RunConfiguration{}
-	// Loop in reverse to ensure that base values get overwritten
-	for i := len(mr.resolvers) - 1; i >= 0; i-- {
-		for _, inst := range mr.resolvers[i].Instances() {
-			for _, ci := range inst.CustomImages {
-				imageSet[ci.Target.String()] = ci
+	for _, r := range mr.resolvers {
+		rc := r.RunConfiguration()
+		runConfig.Setup = append(runConfig.Setup, rc.Setup...)
+		runConfig.TestRunner = append(runConfig.TestRunner, rc.TestRunner...)
+	}
+	return runConfig
+}
+
+func (mr multiResolver) CustomImages() []CustomImage {
+	var customImages []CustomImage
+	for _, r := range mr.resolvers {
+		if len(customImages) == 0 {
+			customImages = append(customImages, r.CustomImages()...)
+			continue
+		}
+		for _, customImage := range r.CustomImages() {
+			var hasImage bool
+			for i, existingImage := range customImages {
+				if customImage.Target.String() == existingImage.Target.String() {
+					if existingImage.DefaultOnly {
+						customImages[i] = customImage
+						hasImage = true
+					}
+					if customImage.DefaultOnly || (customImage.Source == existingImage.Source && customImage.Version == existingImage.Version) {
+						hasImage = true
+					}
+					if hasImage {
+						break
+					}
+				}
 			}
-			runConfig.Setup = append(runConfig.Setup, inst.RunConfiguration.Setup...)
-			runConfig.TestRunner = append(runConfig.TestRunner, inst.RunConfiguration.TestRunner...)
+			if !hasImage {
+				customImages = append(customImages, customImage)
+			}
 		}
 	}
-	images := make([]CustomImage, 0, len(imageSet))
-	for _, ci := range imageSet {
-		images = append(images, ci)
-	}
-	// TODO: Keep multiple instances
-	// TODO: Squash runconfigurations for potential duplicates
-	return []Instance{
-		{
-			RunConfiguration: runConfig,
-			CustomImages:     images,
-		},
-	}
+	return customImages
+
 }
 
 // configurationSuite represents the configuration for
@@ -475,15 +495,13 @@ func (cs *configurationSuite) Dind() bool {
 func (cs *configurationSuite) Images() []reference.NamedTagged {
 	return cs.images
 }
-func (cs *configurationSuite) Instances() []Instance {
-	// TODO: Allow multiple instance configuration
-	runInstance := Instance{
-		CustomImages: cs.customImages,
-	}
+
+func (cs *configurationSuite) RunConfiguration() RunConfiguration {
+	runConfig := RunConfiguration{}
 	for _, script := range cs.config.Pretest {
 		// TODO: respect quoted values
 		command := strings.Split(script.Command, " ")
-		runInstance.Setup = append(runInstance.Setup, Script{
+		runConfig.Setup = append(runConfig.Setup, Script{
 			Command: command,
 			Env:     script.Env,
 		})
@@ -491,7 +509,7 @@ func (cs *configurationSuite) Instances() []Instance {
 	for _, script := range cs.config.Runner {
 		// TODO: respect quoted values
 		command := strings.Split(script.Command, " ")
-		runInstance.TestRunner = append(runInstance.TestRunner, TestScript{
+		runConfig.TestRunner = append(runConfig.TestRunner, TestScript{
 			Script: Script{
 				Command: command,
 				Env:     script.Env,
@@ -500,7 +518,11 @@ func (cs *configurationSuite) Instances() []Instance {
 		})
 	}
 
-	return []Instance{runInstance}
+	return runConfig
+}
+
+func (cs *configurationSuite) CustomImages() []CustomImage {
+	return cs.customImages
 }
 
 func newSuiteConfiguration(path string, config suiteConfiguration) (*configurationSuite, error) {
@@ -529,9 +551,10 @@ func newSuiteConfiguration(path string, config suiteConfiguration) (*configurati
 		}
 
 		customImages = append(customImages, CustomImage{
-			Source:  value.Default,
-			Target:  target,
-			Version: version,
+			Source:      value.Default,
+			Target:      target,
+			Version:     version,
+			DefaultOnly: true,
 		})
 	}
 	images := make([]reference.NamedTagged, 0, len(config.Images))
