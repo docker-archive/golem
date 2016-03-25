@@ -201,6 +201,10 @@ func (r *Runner) Run(client DockerClient) error {
 			// TODO: Add configuration for nocache
 			nocache := false
 			contName := "golem-" + instance.Name
+			// TODO: Use image ID and not image name
+			imageName := r.imageName(instance.Name)
+
+			logrus.Debugf("Running instance %s with %s as %s", instance.Name, imageName, contName)
 
 			hc := &dockerclient.HostConfig{
 				Privileged: true,
@@ -213,7 +217,7 @@ func (r *Runner) Run(client DockerClient) error {
 			// TODO: Add argument for instance name
 
 			config := &dockerclient.Config{
-				Image:      r.imageName(suite.Name),
+				Image:      imageName,
 				Cmd:        append([]string{r.config.ExecutableName}, args...),
 				WorkingDir: "/runner",
 				Volumes: map[string]struct{}{
@@ -446,9 +450,17 @@ func (ic *ImageCache) SaveImage(dgst digest.Digest, id string) error {
 // container with a given name and exported from another
 // Docker instance with the source image name.
 type CustomImage struct {
-	Source  string
-	Target  reference.NamedTagged
-	Version string
+	Source      string
+	Target      reference.NamedTagged
+	Version     string
+	DefaultOnly bool
+}
+
+func (ci CustomImage) String() string {
+	if ci.Version == "" {
+		return fmt.Sprintf("%s,%s", ci.Target.String(), ci.Source)
+	}
+	return fmt.Sprintf("%s,%s,%s", ci.Target.String(), ci.Source, ci.Version)
 }
 
 // CacheConfiguration represents a cache configuration for
