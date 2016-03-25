@@ -1,0 +1,15 @@
+registryv2:
+  image: golem-distribution:latest
+  ports:
+    - "5000"
+docker:
+  image: golem-dind:latest
+  container_name: dockerdaemon
+  command: "docker daemon --insecure-registry localregistry:5000 --debug -s $DOCKER_GRAPHDRIVER"
+  privileged: true
+  environment:
+    DOCKER_GRAPHDRIVER:
+  volumes:
+    - /var/lib/docker
+  links:
+    - registryv2:localregistry
