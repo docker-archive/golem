@@ -40,6 +40,9 @@ func NewDockerClient(co *clientutil.ClientOptions) (client DockerClient, err err
 
 // NewBuilder creates a new docker builder using the given client
 func (dc DockerClient) NewBuilder(contextDirectory, dockerfilePath, repoTag string) (*build.Builder, error) {
+	if dc.options == nil {
+		return nil, fmt.Errorf("missing client options, cannot create builder")
+	}
 	return build.NewBuilder(dc.options.DaemonURL(), dc.options.TLSConfig(), contextDirectory, dockerfilePath, repoTag)
 }
 
