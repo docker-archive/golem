@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/distribution/digest"
@@ -129,6 +130,8 @@ func (r *Runner) imageName(name string) string {
 // the runner. The result of build will be locally built
 // and tagged images ready to push or run directory.
 func (r *Runner) Build(client DockerClient) error {
+	buildStart := time.Now()
+
 	for _, suite := range r.config.Suites {
 		for _, instance := range suite.Instances {
 			baseImage, err := BuildBaseImage(client, instance.BaseImage, r.cache)
@@ -187,6 +190,8 @@ func (r *Runner) Build(client DockerClient) error {
 			}
 		}
 	}
+
+	logrus.WithField(timerKey, time.Since(buildStart)).Info("test image build complete")
 	return nil
 }
 
@@ -194,6 +199,12 @@ func (r *Runner) Build(client DockerClient) error {
 // containers which will manage the tests and waits for
 // the results.
 func (r *Runner) Run(client DockerClient) error {
+	var (
+		failedTests int
+		runTests    int
+		runnerStart = time.Now()
+	)
+
 	// TODO: Run in parallel (use libcompose?)
 	// TODO: validate namespace when in swarm mode
 	for _, suite := range r.config.Suites {
@@ -295,8 +306,30 @@ func (r *Runner) Run(client DockerClient) error {
 			if err := client.AttachToContainer(attachOptions); err != nil {
 				return fmt.Errorf("Error attaching to container: %v", err)
 			}
+
+			inspectedContainer, err := client.InspectContainer(container.ID)
+			if err != nil {
+				return fmt.Errorf("Error inspecting container: %v", err)
+			}
+			runTests = runTests + 1
+			if inspectedContainer.State.ExitCode > 0 {
+				logrus.Errorf("Test failed with exit code %d", inspectedContainer.State.ExitCode)
+				failedTests = failedTests + 1
+			}
 		}
 	}
+
+	logFields := logrus.Fields{
+		timerKey: time.Since(runnerStart),
+		"ran":    runTests,
+		"failed": failedTests,
+	}
+	logrus.WithFields(logFields).Info("test runner complete")
+
+	if failedTests > 0 {
+		return fmt.Errorf("test failure: %d of %d tests failed", failedTests, runTests)
+	}
+
 	return nil
 }
 
