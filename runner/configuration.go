@@ -428,12 +428,16 @@ func (mr multiResolver) RunConfiguration() RunConfiguration {
 
 func (mr multiResolver) CustomImages() []CustomImage {
 	var customImages []CustomImage
+	targets := map[string]struct{}{}
 	for _, r := range mr.resolvers {
 		if len(customImages) == 0 {
 			customImages = append(customImages, r.CustomImages()...)
 			continue
 		}
 		for _, customImage := range r.CustomImages() {
+			if customImage.DefaultOnly {
+				targets[customImage.Target.String()] = struct{}{}
+			}
 			var hasImage bool
 			for i, existingImage := range customImages {
 				if customImage.Target.String() == existingImage.Target.String() {
@@ -454,7 +458,13 @@ func (mr multiResolver) CustomImages() []CustomImage {
 			}
 		}
 	}
-	return customImages
+	filtered := make([]CustomImage, 0, len(customImages))
+	for _, customImage := range customImages {
+		if _, ok := targets[customImage.Target.String()]; ok {
+			filtered = append(filtered, customImage)
+		}
+	}
+	return filtered
 
 }
 
