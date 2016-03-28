@@ -237,21 +237,30 @@ func (c *ConfigurationManager) runnerConfiguration() (runnerConfiguration, error
 			multiInstance = true
 		}
 
-		for idx, customImages := range imageMatrix {
-			name := registrySuite.Name
-			if multiInstance {
-				logrus.Debugf("Instance %d: %v", idx+1, customImages)
-				name = fmt.Sprintf("%s-%d", name, idx+1)
-			}
-			imageConf := baseConf
-			imageConf.CustomImages = customImages
-
+		if len(imageMatrix) == 0 {
 			conf := InstanceConfiguration{
-				Name:             name,
-				BaseImage:        imageConf,
+				Name:             registrySuite.Name,
+				BaseImage:        baseConf,
 				RunConfiguration: runConfig,
 			}
 			registrySuite.Instances = append(registrySuite.Instances, conf)
+		} else {
+			for idx, customImages := range imageMatrix {
+				name := registrySuite.Name
+				if multiInstance {
+					logrus.Debugf("Instance %d: %v", idx+1, customImages)
+					name = fmt.Sprintf("%s-%d", name, idx+1)
+				}
+				imageConf := baseConf
+				imageConf.CustomImages = customImages
+
+				conf := InstanceConfiguration{
+					Name:             name,
+					BaseImage:        imageConf,
+					RunConfiguration: runConfig,
+				}
+				registrySuite.Instances = append(registrySuite.Instances, conf)
+			}
 		}
 
 		runnerConfig.Suites = append(runnerConfig.Suites, registrySuite)
@@ -430,10 +439,6 @@ func (mr multiResolver) CustomImages() []CustomImage {
 	var customImages []CustomImage
 	targets := map[string]struct{}{}
 	for _, r := range mr.resolvers {
-		if len(customImages) == 0 {
-			customImages = append(customImages, r.CustomImages()...)
-			continue
-		}
 		for _, customImage := range r.CustomImages() {
 			if customImage.DefaultOnly {
 				targets[customImage.Target.String()] = struct{}{}
