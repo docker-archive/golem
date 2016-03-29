@@ -68,7 +68,8 @@ function login_oauth() {
 
 	tmpFile=$(mktemp)
 	get_file_t /root/.docker/config.json $tmpFile
-	grep -Pz "\"$1\": \\{[[:space:]]+\"auth\": \"[[:alnum:]]+\",[[:space:]]+\"identitytoken\"" $tmpFile
+	run awk -v RS="" "/\"$1\": \\{[[:space:]]+\"auth\": \"[[:alnum:]]+\",[[:space:]]+\"identitytoken\"/ {exit 3}" $tmpFile
+	[ "$status" -eq 3 ]
 }
 
 function parse_version() {
