@@ -81,6 +81,32 @@ base="hello-world"
 	docker_t pull $image
 }
 
+@test "Test oauth push and build with token auth" {
+	version_check docker "$GOLEM_DIND_VERSION" "1.11.0"
+
+	login_oauth localregistry:5558
+	image="localregistry:5558/testuser/token-build"
+	tempImage $image
+
+	run docker_t push $image
+	echo $output
+	[ "$status" -eq 0 ]
+	has_digest "$output"
+
+	docker_t rmi $image
+
+	image2="localregistry:5558/testuser/token-build-2"
+	run build $image2 $image
+	echo $output
+	[ "$status" -eq 0 ]
+
+	run docker_t push $image2
+	echo $output
+	[ "$status" -eq 0 ]
+	has_digest "$output"
+
+}
+
 @test "Test oauth push and pull with token auth wrong namespace" {
 	version_check docker "$GOLEM_DIND_VERSION" "1.11.0"
 
