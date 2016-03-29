@@ -34,6 +34,31 @@ function setup() {
 	has_digest "$output"
 }
 
+@test "Test basic auth with build" {
+	basic_auth_version_check
+	login $hostname:5441
+
+	image1=$hostname:5441/$image-build
+	image2=$hostname:5441/$image-build-2
+
+	tempImage $image1
+
+	run docker_t push $image1
+	[ "$status" -eq 0 ]
+	has_digest "$output"
+
+	docker_t rmi $image1
+
+	run build $image2 $image1
+	echo $output
+	[ "$status" -eq 0 ]
+
+	run docker_t push $image2
+	echo $output
+	[ "$status" -eq 0 ]
+	has_digest "$output"
+}
+
 @test "Test TLS client auth" {
 	docker_t tag -f $image $hostname:5442/$image
 	run docker_t push $hostname:5442/$image

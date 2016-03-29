@@ -54,6 +54,7 @@ function basic_auth_version_check() {
 # uses user, password, and email variables set outside of function
 # requies bats
 function login() {
+	rm -f /root/.docker/config.json
 	run docker_t login -u $user -p $password -e $email $1
 	if [ "$status" -ne 0 ]; then
 		echo $output
