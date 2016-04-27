@@ -68,12 +68,12 @@ tokenserveroauth:
   ports:
     - "5559"
 malevolent:
-  build: "malevolent"
+  image: "dmcgowan/malevolent:0.1.0"
   command: "-l 0.0.0.0:6666 -r http://registryv2:5000 -c /certs/localregistry.cert -k /certs/localregistry.key"
   links:
     - registryv2:registryv2
   volumes:
-   - ./malevolent/certs:/certs:ro
+   - ./malevolent-certs:/certs:ro
   ports:
    - "6666"
 docker:
