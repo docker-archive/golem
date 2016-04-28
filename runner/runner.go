@@ -116,14 +116,16 @@ type runnerConfiguration struct {
 type Runner struct {
 	config runnerConfiguration
 	cache  CacheConfiguration
+	debug  bool
 }
 
 // newRunner creates a new runner from a runner
 // and cache configuration.
-func newRunner(config runnerConfiguration, cache CacheConfiguration) TestRunner {
+func newRunner(config runnerConfiguration, cache CacheConfiguration, debug bool) TestRunner {
 	return &Runner{
 		config: config,
 		cache:  cache,
+		debug:  debug,
 	}
 }
 
@@ -143,6 +145,9 @@ func (r *Runner) Build(cli DockerClient) error {
 
 	for _, suite := range r.config.Suites {
 		for _, instance := range suite.Instances {
+			imageName := r.imageName(instance.Name)
+			logrus.WithField("image", imageName).Info("building image")
+
 			baseImage, err := BuildBaseImage(cli, instance.BaseImage, r.cache)
 			if err != nil {
 				return fmt.Errorf("failure building base image: %v", err)
@@ -189,7 +194,7 @@ func (r *Runner) Build(cli DockerClient) error {
 				return fmt.Errorf("error closing dockerfile: %s", err)
 			}
 
-			builder, err := cli.NewBuilder(td, "", r.imageName(instance.Name))
+			builder, err := cli.NewBuilder(td, "", imageName)
 			if err != nil {
 				return fmt.Errorf("failed to create builder: %s", err)
 			}
@@ -225,7 +230,12 @@ func (r *Runner) Run(cli DockerClient) error {
 			// TODO: Use image ID and not image name
 			imageName := r.imageName(instance.Name)
 
-			logrus.Debugf("Running instance %s with %s as %s", instance.Name, imageName, contName)
+			logFields := logrus.Fields{
+				"instance":  instance.Name,
+				"image":     imageName,
+				"container": contName,
+			}
+			logrus.WithFields(logFields).Info("running instance")
 
 			hc := &container.HostConfig{
 				Privileged:   true,
@@ -235,6 +245,9 @@ func (r *Runner) Run(cli DockerClient) error {
 			args := []string{}
 			if suite.DockerInDocker {
 				args = append(args, "-docker")
+			}
+			if r.debug {
+				args = append(args, "-debug")
 			}
 			// TODO: Add argument for instance name
 
@@ -379,16 +392,16 @@ func ensureImage(cli DockerClient, image string) (string, error) {
 	// Image must be tagged reference if it does not exist
 	ref, err := reference.Parse(image)
 	if err != nil {
-		logrus.Debugf("Image is not valid reference %q: %v", image, err)
+		logrus.Errorf("Image is not valid reference %q: %v", image, err)
+		return "", err
 	}
 	tagged, ok := ref.(reference.NamedTagged)
 	if !ok {
-		logrus.Debugf("Tagged reference required %q", image)
+		logrus.Errorf("Tagged reference required %q", image)
 		return "", errors.New("invalid reference, tag needed")
 	}
 
-	logrus.Infof("Pulling image %s", tagged.String())
-
+	pullStart := time.Now()
 	pullOptions := types.ImagePullOptions{
 		PrivilegeFunc: registryAuthNotSupported,
 	}
@@ -405,8 +418,14 @@ func ensureImage(cli DockerClient, image string) (string, error) {
 		logrus.Errorf("Error copying pull output: %v", err)
 		return "", err
 	}
+	// TODO: Get pulled digest
 
-	// TODO: Get pulled digest and inspect by digest
+	logFields := logrus.Fields{
+		timerKey: time.Since(pullStart),
+		"image":  tagged.String(),
+	}
+	logrus.WithFields(logFields).Info("image pulled")
+
 	info, _, err = cli.ImageInspectWithRaw(ctx, tagged.String(), false)
 	if err != nil {
 		return "", nil
@@ -635,6 +654,8 @@ func BuildBaseImage(cli DockerClient, conf BaseImageConfiguration, c CacheConfig
 		logrus.Debugf("Building image, could not find in cache: %v", err)
 	}
 
+	buildStart := time.Now()
+
 	// Create temp build directory
 	td, err := ioutil.TempDir("", "golem-")
 	if err != nil {
@@ -656,12 +677,19 @@ func BuildBaseImage(cli DockerClient, conf BaseImageConfiguration, c CacheConfig
 		return "", fmt.Errorf("unable to make images directory: %v", err)
 	}
 
+	saveStart := time.Now()
+	logrus.Debugf("Saving %d images", len(images))
 	for _, img := range images {
 		if err := saveImage(cli, filepath.Join(imagesDir, img+".tar"), img); err != nil {
 			return "", fmt.Errorf("error saving image %s: %v", img, err)
 		}
 
 	}
+	logFields := logrus.Fields{
+		timerKey: time.Since(saveStart),
+		"images": len(images),
+	}
+	logrus.WithFields(logFields).Info("image save complete")
 
 	if err := saveTagMap(filepath.Join(imagesDir, "images.json"), tags); err != nil {
 		return "", fmt.Errorf("error saving tag map: %v", err)
@@ -684,6 +712,8 @@ func BuildBaseImage(cli DockerClient, conf BaseImageConfiguration, c CacheConfig
 		logrus.Errorf("Error building: %v", err)
 		return "", err
 	}
+
+	logrus.WithField(timerKey, time.Since(buildStart)).Info("base image build complete")
 
 	// Update index
 	imageID := builder.ImageID()

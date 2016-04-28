@@ -24,6 +24,7 @@ func main() {
 	var (
 		cacheDir    string
 		startDaemon bool
+		debug       bool
 	)
 
 	co := clientutil.NewClientOptions()
@@ -31,12 +32,13 @@ func main() {
 
 	flag.StringVar(&cacheDir, "cache", "", "Cache directory")
 	flag.BoolVar(&startDaemon, "rundaemon", false, "Start daemon")
-	// TODO: Add swarm flag and host option
+	flag.BoolVar(&debug, "debug", false, "Whether to output debug logs")
 
 	flag.Parse()
 
-	// TODO: Allow quiet and verbose mode
-	logrus.SetLevel(logrus.DebugLevel)
+	if debug {
+		logrus.SetLevel(logrus.DebugLevel)
+	}
 
 	if cacheDir == "" {
 		td, err := ioutil.TempDir("", "golem-cache-")
@@ -74,7 +76,7 @@ func main() {
 		logrus.Fatal(err)
 	}
 
-	r, err := cm.CreateRunner(c)
+	r, err := cm.CreateRunner(c, debug)
 	if err != nil {
 		logrus.Fatalf("Error creating runner: %v", err)
 	}
@@ -93,17 +95,19 @@ func runnerMain() {
 		command string
 		dind    bool
 		clean   bool
+		debug   bool
 	)
 
-	// TODO: Parse runner options
 	flag.StringVar(&command, "command", "bats", "Command to run")
 	flag.BoolVar(&dind, "docker", false, "Whether to run docker")
 	flag.BoolVar(&clean, "clean", false, "Whether to ensure /var/lib/docker is empty")
+	flag.BoolVar(&debug, "debug", false, "Whether to output debug logs")
 
 	flag.Parse()
 
-	// TODO: Allow quiet and verbose mode
-	logrus.SetLevel(logrus.DebugLevel)
+	if debug {
+		logrus.SetLevel(logrus.DebugLevel)
+	}
 
 	logrus.Debugf("Runner!")
 
