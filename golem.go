@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"golang.org/x/net/context"
+
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/golem/clientutil"
 	"github.com/docker/golem/runner"
@@ -52,7 +54,7 @@ func main() {
 	var client runner.DockerClient
 	if startDaemon {
 		logger := runner.NewConsoleLogCapturer()
-		c, shutdown, err := runner.StartDaemon("docker", logger)
+		c, shutdown, err := runner.StartDaemon(context.Background(), "docker", logger)
 		if err != nil {
 			logrus.Fatalf("Error starting deamon: %v", err)
 		}

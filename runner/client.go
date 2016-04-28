@@ -2,38 +2,45 @@ package runner
 
 import (
 	"fmt"
+	"net/http"
+	"os"
+
+	"golang.org/x/net/context"
 
 	"github.com/Sirupsen/logrus"
+	"github.com/docker/engine-api/client"
 	"github.com/docker/golem/clientutil"
 	"github.com/docker/golem/versionutil"
-	dockerclient "github.com/fsouza/go-dockerclient"
 	"github.com/jlhawn/dockramp/build"
 )
 
 // DockerClient represents the docker client used by the runner
 type DockerClient struct {
-	*dockerclient.Client
+	*client.Client
 	options *clientutil.ClientOptions
 }
 
 // NewDockerClient creates a new docker client from client options
-func NewDockerClient(co *clientutil.ClientOptions) (client DockerClient, err error) {
+func NewDockerClient(co *clientutil.ClientOptions) (DockerClient, error) {
+	var httpClient *http.Client
 	tlsConfig := co.TLSConfig()
-	var dc *dockerclient.Client
+	host := co.DaemonURL()
+
 	if tlsConfig != nil {
-		dc, err = dockerclient.NewTLSClient(co.DaemonURL(), co.ClientCertFile(), co.ClientKeyFile(), co.CACertFile())
-		if err != nil {
-			return
-		}
-	} else {
-		dc, err = dockerclient.NewClient(co.DaemonURL())
-		if err != nil {
-			return
+		httpClient = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: tlsConfig,
+			},
 		}
 	}
 
+	apiClient, err := client.NewClient(host, os.Getenv("DOCKER_API_VERSION"), httpClient, nil)
+	if err != nil {
+		return DockerClient{}, err
+	}
+
 	return DockerClient{
-		Client:  dc,
+		Client:  apiClient,
 		options: co,
 	}, nil
 }
@@ -49,14 +56,15 @@ func (dc DockerClient) NewBuilder(contextDirectory, dockerfilePath, repoTag stri
 // CheckServerVersion checks that the server version is atleast
 // the provided version, throws an error if not
 func (dc DockerClient) CheckServerVersion(version versionutil.Version) error {
-	v, err := dc.Version()
+	ctx := context.Background()
+	v, err := dc.ServerVersion(ctx)
 	if err != nil {
 		return fmt.Errorf("error getting version: %v", err)
 	}
 
-	serverVersion, err := versionutil.ParseVersion(v.Get("Version"))
+	serverVersion, err := versionutil.ParseVersion(v.Version)
 	if err != nil {
-		return fmt.Errorf("error parsing version %s: %v", v.Get("Version"), err)
+		return fmt.Errorf("error parsing version %s: %v", v.Version, err)
 	}
 
 	if serverVersion.LessThan(version) {
