@@ -16,13 +16,23 @@ import (
 	"time"
 )
 
+var _ Client = (*DockerClient)(nil)
+
 const (
+	// APIVersion is currently hardcoded to v1.15
+	// TODO: bump the API version or allow users to choose which API version to
+	// use the client with. The current value does not make sense for many
+	// methods, such as ContainerStats, StartMonitorStats, and StopAllMonitorStats
+	// (v1.17) and
+	// ListVolumes, {Remove,Create}Volume, ListNetworks,
+	// {Inspect,Create,Connect,Disconnect,Remove}Network (v1.21)
 	APIVersion = "v1.15"
 )
 
 var (
-	ErrImageNotFound = errors.New("Image not found")
-	ErrNotFound      = errors.New("Not found")
+	ErrImageNotFound     = errors.New("Image not found")
+	ErrNotFound          = errors.New("Not found")
+	ErrConnectionRefused = errors.New("Cannot connect to the docker engine endpoint")
 
 	defaultTimeout = 30 * time.Second
 )
@@ -46,10 +56,10 @@ func (e Error) Error() string {
 }
 
 func NewDockerClient(daemonUrl string, tlsConfig *tls.Config) (*DockerClient, error) {
-	return NewDockerClientTimeout(daemonUrl, tlsConfig, time.Duration(defaultTimeout))
+	return NewDockerClientTimeout(daemonUrl, tlsConfig, time.Duration(defaultTimeout), nil)
 }
 
-func NewDockerClientTimeout(daemonUrl string, tlsConfig *tls.Config, timeout time.Duration) (*DockerClient, error) {
+func NewDockerClientTimeout(daemonUrl string, tlsConfig *tls.Config, timeout time.Duration, setUserTimeout tcpFunc) (*DockerClient, error) {
 	u, err := url.Parse(daemonUrl)
 	if err != nil {
 		return nil, err
@@ -61,7 +71,7 @@ func NewDockerClientTimeout(daemonUrl string, tlsConfig *tls.Config, timeout tim
 			u.Scheme = "https"
 		}
 	}
-	httpClient := newHTTPClient(u, tlsConfig, timeout)
+	httpClient := newHTTPClient(u, tlsConfig, timeout, setUserTimeout)
 	return &DockerClient{u, httpClient, tlsConfig, 0, nil}, nil
 }
 
@@ -99,6 +109,9 @@ func (client *DockerClient) doStreamRequest(method string, path string, in io.Re
 	if err != nil {
 		if !strings.Contains(err.Error(), "connection refused") && client.TLSConfig == nil {
 			return nil, fmt.Errorf("%v. Are you trying to connect to a TLS-enabled daemon without TLS?", err)
+		}
+		if strings.Contains(err.Error(), "connection refused") {
+			return nil, ErrConnectionRefused
 		}
 		return nil, err
 	}
@@ -184,7 +197,7 @@ func (client *DockerClient) InspectContainer(id string) (*ContainerInfo, error) 
 	return info, nil
 }
 
-func (client *DockerClient) CreateContainer(config *ContainerConfig, name string) (string, error) {
+func (client *DockerClient) CreateContainer(config *ContainerConfig, name string, auth *AuthConfig) (string, error) {
 	data, err := json.Marshal(config)
 	if err != nil {
 		return "", err
@@ -195,14 +208,22 @@ func (client *DockerClient) CreateContainer(config *ContainerConfig, name string
 		v.Set("name", name)
 		uri = fmt.Sprintf("%s?%s", uri, v.Encode())
 	}
-	data, err = client.doRequest("POST", uri, data, nil)
+	headers := map[string]string{}
+	if auth != nil {
+		encoded_auth, err := auth.encode()
+		if err != nil {
+			return "", err
+		}
+		headers["X-Registry-Auth"] = encoded_auth
+	}
+	data, err = client.doRequest("POST", uri, data, headers)
 	if err != nil {
 		return "", err
 	}
 	result := &RespContainersCreate{}
 	err = json.Unmarshal(data, result)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf(string(data))
 	}
 	return result.Id, nil
 }
@@ -242,6 +263,36 @@ func (client *DockerClient) ContainerChanges(id string) ([]*ContainerChanges, er
 		return nil, err
 	}
 	return changes, nil
+}
+
+func (client *DockerClient) ContainerStats(id string, stopChan <-chan struct{}) (<-chan StatsOrError, error) {
+	uri := fmt.Sprintf("/%s/containers/%s/stats", APIVersion, id)
+	resp, err := client.HTTPClient.Get(client.URL.String() + uri)
+	if err != nil {
+		return nil, err
+	}
+
+	decode := func(decoder *json.Decoder) decodingResult {
+		var containerStats Stats
+		if err := decoder.Decode(&containerStats); err != nil {
+			return decodingResult{err: err}
+		} else {
+			return decodingResult{result: containerStats}
+		}
+	}
+	decodingResultChan := client.readJSONStream(resp.Body, decode, stopChan)
+	statsOrErrorChan := make(chan StatsOrError)
+	go func() {
+		for decodingResult := range decodingResultChan {
+			stats, _ := decodingResult.result.(Stats)
+			statsOrErrorChan <- StatsOrError{
+				Stats: stats,
+				Error: decodingResult.err,
+			}
+		}
+		close(statsOrErrorChan)
+	}()
+	return statsOrErrorChan, nil
 }
 
 func (client *DockerClient) readJSONStream(stream io.ReadCloser, decode func(*json.Decoder) decodingResult, stopChan <-chan struct{}) <-chan decodingResult {
@@ -491,7 +542,7 @@ func (client *DockerClient) StartMonitorEvents(cb Callback, ec chan error, args 
 		for e := range eventErrChan {
 			if e.Error != nil {
 				if ec != nil {
-					ec <- err
+					ec <- e.Error
 				}
 				return
 			}
@@ -501,6 +552,9 @@ func (client *DockerClient) StartMonitorEvents(cb Callback, ec chan error, args 
 }
 
 func (client *DockerClient) StopAllMonitorEvents() {
+	if client.eventStopChan == nil {
+		return
+	}
 	close(client.eventStopChan)
 }
 
@@ -648,17 +702,9 @@ func (client *DockerClient) InspectImage(id string) (*ImageInfo, error) {
 }
 
 func (client *DockerClient) LoadImage(reader io.Reader) error {
-	data, err := ioutil.ReadAll(reader)
-	if err != nil {
-		return err
-	}
-
 	uri := fmt.Sprintf("/%s/images/load", APIVersion)
-	_, err = client.doRequest("POST", uri, data, nil)
-	if err != nil {
-		return err
-	}
-	return nil
+	_, err := client.doStreamRequest("POST", uri, reader, nil)
+	return err
 }
 
 func (client *DockerClient) RemoveContainer(id string, force, volumes bool) error {
@@ -710,6 +756,31 @@ func (client *DockerClient) RemoveImage(name string, force bool) ([]*ImageDelete
 		return nil, err
 	}
 	return imageDelete, nil
+}
+
+func (client *DockerClient) SearchImages(query, registry string, auth *AuthConfig) ([]ImageSearch, error) {
+	term := query
+	if registry != "" {
+		term = registry + "/" + term
+	}
+	uri := fmt.Sprintf("/%s/images/search?term=%s", APIVersion, term)
+	headers := map[string]string{}
+	if auth != nil {
+		if encodedAuth, err := auth.encode(); err != nil {
+			return nil, err
+		} else {
+			headers["X-Registry-Auth"] = encodedAuth
+		}
+	}
+	data, err := client.doRequest("GET", uri, nil, headers)
+	if err != nil {
+		return nil, err
+	}
+	var imageSearches []ImageSearch
+	if err := json.Unmarshal(data, &imageSearches); err != nil {
+		return nil, err
+	}
+	return imageSearches, nil
 }
 
 func (client *DockerClient) PauseContainer(id string) error {
@@ -913,8 +984,8 @@ func (client *DockerClient) ConnectNetwork(id, container string) error {
 	return err
 }
 
-func (client *DockerClient) DisconnectNetwork(id, container string) error {
-	data, err := json.Marshal(NetworkDisconnect{Container: container})
+func (client *DockerClient) DisconnectNetwork(id, container string, force bool) error {
+	data, err := json.Marshal(NetworkDisconnect{Container: container, Force: force})
 	if err != nil {
 		return err
 	}

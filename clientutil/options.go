@@ -9,10 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/docker/engine-api/client"
 )
 
 const (
-	defaultDockerSocket       = "unix:///var/run/docker.sock"
 	defaultCertDir            = "$HOME/.docker"
 	defaultCACertFilename     = "ca.pem"
 	defaultClientCertFilename = "cert.pem"
@@ -63,7 +64,7 @@ func (co *ClientOptions) parse() {
 	// then fallback to default.
 	if co.daemonURL == "" {
 		if co.daemonURL = os.Getenv("DOCKER_HOST"); co.daemonURL == "" {
-			co.daemonURL = defaultDockerSocket
+			co.daemonURL = client.DefaultDockerHost
 		}
 	}
 

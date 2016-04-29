@@ -3,6 +3,8 @@ FROM alpine:3.3
 RUN apk add --no-cache \
                 bash \
                 curl \
+                musl-dev \
+                gcc \
                 git \
                 go \
                 xz

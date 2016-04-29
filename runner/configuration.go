@@ -156,12 +156,12 @@ func NewConfigurationManager() *ConfigurationManager {
 
 // CreateRunner creates a new test runner from a docker load version
 // and cache configuration.
-func (c *ConfigurationManager) CreateRunner(cache CacheConfiguration) (TestRunner, error) {
+func (c *ConfigurationManager) CreateRunner(cache CacheConfiguration, debug bool) (TestRunner, error) {
 	runConfig, err := c.runnerConfiguration()
 	if err != nil {
 		return nil, err
 	}
-	return newRunner(runConfig, cache), nil
+	return newRunner(runConfig, cache, debug), nil
 }
 
 // runnerConfiguration creates a runnerConfiguration resolving all the

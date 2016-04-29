@@ -3,6 +3,7 @@ package runner
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -11,11 +12,16 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/context"
+
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/distribution/reference"
+	"github.com/docker/docker/pkg/jsonmessage"
+	"github.com/docker/docker/pkg/term"
+	"github.com/docker/engine-api/client"
+	"github.com/docker/engine-api/types"
 	"github.com/docker/golem/clientutil"
 	"github.com/docker/golem/versionutil"
-	dockerclient "github.com/fsouza/go-dockerclient"
 )
 
 const (
@@ -59,6 +65,7 @@ func NewSuiteRunner(config SuiteRunnerConfiguration) *SuiteRunner {
 // any docker images, running setup scripts, and starting the docker
 // daemon used by the tests.
 func (sr *SuiteRunner) Setup() error {
+	ctx := context.Background()
 	setupStart := time.Now()
 	// Run all setup scripts
 	for _, setupScript := range sr.config.RunConfiguration.Setup {
@@ -86,7 +93,7 @@ func (sr *SuiteRunner) Setup() error {
 
 		dockerStart := time.Now()
 		logrus.Debugf("Starting daemon")
-		pc, k, err := StartDaemon("docker", sr.config.DockerLogCapturer)
+		pc, k, err := StartDaemon(ctx, "docker", sr.config.DockerLogCapturer)
 		if err != nil {
 			return fmt.Errorf("error starting daemon: %s", err)
 		}
@@ -95,23 +102,22 @@ func (sr *SuiteRunner) Setup() error {
 
 		cleanupStart := time.Now()
 		// Remove all containers
-		containers, err := pc.ListContainers(dockerclient.ListContainersOptions{All: true})
+		containers, err := pc.ContainerList(ctx, types.ContainerListOptions{All: true})
 		if err != nil {
 			return fmt.Errorf("error listing containers: %v", err)
 		}
 		for _, container := range containers {
 			logrus.Debugf("Removing container %s", container.ID)
-			removeOptions := dockerclient.RemoveContainerOptions{
-				ID:            container.ID,
+			removeOptions := types.ContainerRemoveOptions{
 				RemoveVolumes: true,
 				Force:         true,
 			}
-			if err := pc.RemoveContainer(removeOptions); err != nil {
+			if err := pc.ContainerRemove(ctx, container.ID, removeOptions); err != nil {
 				return fmt.Errorf("error removing container: %v", err)
 			}
 		}
 
-		if err := syncImages(pc, "/images", sr.config.CleanImageCache); err != nil {
+		if err := syncImages(ctx, pc, "/images", sr.config.CleanImageCache); err != nil {
 			return fmt.Errorf("error syncing images: %v", err)
 		}
 		logrus.WithField(timerKey, time.Since(cleanupStart)).Info("image sync complete")
@@ -220,7 +226,7 @@ func RunScript(lc LogCapturer, script Script) error {
 
 // StartDaemon starts a daemon using the provided binary returning
 // a client to the binary, a close function, and error.
-func StartDaemon(binary string, lc LogCapturer) (DockerClient, func() error, error) {
+func StartDaemon(ctx context.Context, binary string, lc LogCapturer) (DockerClient, func() error, error) {
 	// Get Docker version of process
 	previousVersion, err := versionutil.BinaryVersion(binary)
 	if err != nil {
@@ -246,16 +252,16 @@ func StartDaemon(binary string, lc LogCapturer) (DockerClient, func() error, err
 	logrus.Debugf("Waiting for daemon to start")
 	time.Sleep(2 * time.Second)
 
-	client, err := dockerclient.NewClientFromEnv()
+	cli, err := client.NewEnvClient()
 	if err != nil {
 		return DockerClient{}, nil, fmt.Errorf("could not initialize client: %s", err)
 	}
 
 	// Wait for it to start
 	for i := 0; ; i++ {
-		v, err := client.Version()
+		v, err := cli.ServerVersion(ctx)
 		if err == nil {
-			logrus.Debugf("Established connection to daemon with version %s", v.Get("Version"))
+			logrus.Debugf("Established connection to daemon with version %s", v.Version)
 			break
 		}
 		if i >= 10 {
@@ -272,7 +278,7 @@ func StartDaemon(binary string, lc LogCapturer) (DockerClient, func() error, err
 		return os.RemoveAll("/var/run/docker.pid")
 	}
 
-	return DockerClient{Client: client, options: &clientutil.ClientOptions{}}, kill, nil
+	return DockerClient{Client: cli, options: &clientutil.ClientOptions{}}, kill, nil
 }
 
 type tagMap map[string][]string
@@ -312,7 +318,7 @@ func listDiff(l1, l2 []string) ([]string, []string) {
 	return removed, added
 }
 
-func syncImages(client DockerClient, imageRoot string, clean bool) error {
+func syncImages(ctx context.Context, cli DockerClient, imageRoot string, clean bool) error {
 	logrus.Debugf("Syncing images from %s", imageRoot)
 	f, err := os.Open(filepath.Join(imageRoot, "images.json"))
 	if err != nil {
@@ -334,7 +340,7 @@ func syncImages(client DockerClient, imageRoot string, clean bool) error {
 		}
 	}
 
-	images, err := client.ListImages(dockerclient.ListImagesOptions{})
+	images, err := cli.ImageList(ctx, types.ImageListOptions{})
 	if err != nil {
 		return fmt.Errorf("error listing images: %v", err)
 	}
@@ -350,7 +356,7 @@ func syncImages(client DockerClient, imageRoot string, clean bool) error {
 			// Sync tags for image ID
 			removedTags, addedTags := listDiff(repoTags, expectedTags)
 			for _, t := range addedTags {
-				if err := tagImage(client, img.ID, t); err != nil {
+				if err := tagImage(ctx, cli, img.ID, t); err != nil {
 					return err
 				}
 			}
@@ -360,7 +366,7 @@ func syncImages(client DockerClient, imageRoot string, clean bool) error {
 				if _, ok := allTags[t]; !ok {
 					if clean {
 						logrus.Debugf("Removing tag %s", t)
-						if err := client.RemoveImage(t); err != nil {
+						if _, err := cli.ImageRemove(ctx, t, types.ImageRemoveOptions{}); err != nil {
 							return fmt.Errorf("error removing tag %s: %v", t, err)
 						}
 					} else {
@@ -369,10 +375,10 @@ func syncImages(client DockerClient, imageRoot string, clean bool) error {
 				}
 			}
 		} else if clean {
-			removeOptions := dockerclient.RemoveImageOptions{
+			removeOptions := types.ImageRemoveOptions{
 				Force: true,
 			}
-			if err := client.RemoveImageExtended(img.ID, removeOptions); err != nil {
+			if _, err := cli.ImageRemove(ctx, img.ID, removeOptions); err != nil {
 				return fmt.Errorf("error moving image %s: %v", img.ID, err)
 			}
 		} else {
@@ -386,28 +392,43 @@ func syncImages(client DockerClient, imageRoot string, clean bool) error {
 		if !ok {
 			return fmt.Errorf("missing image %s in tag map", imageID)
 		}
-		_, err := client.InspectImage(imageID)
+		_, _, err := cli.ImageInspectWithRaw(ctx, imageID, false)
 		if err != nil {
-			tf, err := os.Open(filepath.Join(imageRoot, imageID+".tar"))
-			if err != nil {
-				return fmt.Errorf("error opening image tar %s: %v", imageID, err)
-			}
-			defer tf.Close()
-			loadOptions := dockerclient.LoadImageOptions{
-				InputStream: tf,
-			}
-			if err := client.LoadImage(loadOptions); err != nil {
-				return fmt.Errorf("error loading image %s: %v", imageID, err)
+			if err := imageLoad(ctx, cli, imageRoot, imageID); err != nil {
+				return err
 			}
 		}
 		for _, t := range tags {
-			if err := tagImage(client, imageID, t); err != nil {
+			if err := tagImage(ctx, cli, imageID, t); err != nil {
 				return err
 			}
 		}
 	}
 
 	return nil
+}
+
+func imageLoad(ctx context.Context, cli DockerClient, imageRoot, imageID string) error {
+	tf, err := os.Open(filepath.Join(imageRoot, imageID+".tar"))
+	if err != nil {
+		return fmt.Errorf("error opening image tar %s: %v", imageID, err)
+	}
+	defer tf.Close()
+
+	resp, err := cli.ImageLoad(ctx, tf, true)
+	if err != nil {
+		return fmt.Errorf("error loading image %s: %v", imageID, err)
+	}
+	defer resp.Body.Close()
+
+	outFd, isTerminalOut := term.GetFdInfo(os.Stdout)
+
+	if resp.Body != nil && resp.JSON {
+		return jsonmessage.DisplayJSONMessagesStream(resp.Body, os.Stdout, outFd, isTerminalOut, nil)
+	}
+
+	_, err = io.Copy(os.Stdout, resp.Body)
+	return err
 }
 
 func filterRepoTags(tags []string) []string {
@@ -420,7 +441,7 @@ func filterRepoTags(tags []string) []string {
 	return filtered
 }
 
-func tagImage(client DockerClient, img, tag string) error {
+func tagImage(ctx context.Context, cli DockerClient, img, tag string) error {
 	ref, err := reference.Parse(tag)
 	if err != nil {
 		return fmt.Errorf("invalid tag %s: %v", tag, err)
@@ -429,12 +450,10 @@ func tagImage(client DockerClient, img, tag string) error {
 	if !ok {
 		return fmt.Errorf("expecting named tagged reference: %s", tag)
 	}
-	tagOptions := dockerclient.TagImageOptions{
-		Repo:  namedTagged.Name(),
-		Tag:   namedTagged.Tag(),
+	tagOptions := types.ImageTagOptions{
 		Force: true,
 	}
-	if err := client.TagImage(img, tagOptions); err != nil {
+	if err := cli.ImageTag(ctx, img, namedTagged.String(), tagOptions); err != nil {
 		return fmt.Errorf("error tagging image %s as %s: %v", img, tag, err)
 	}
 

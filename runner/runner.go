@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"path"
@@ -13,10 +14,18 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/context"
+
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/distribution/digest"
 	"github.com/docker/distribution/reference"
-	dockerclient "github.com/fsouza/go-dockerclient"
+	"github.com/docker/docker/pkg/jsonmessage"
+	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/docker/docker/pkg/term"
+	"github.com/docker/engine-api/client"
+	"github.com/docker/engine-api/types"
+	"github.com/docker/engine-api/types/container"
+	"github.com/docker/engine-api/types/network"
 	"github.com/termie/go-shutil"
 )
 
@@ -95,10 +104,10 @@ type runnerConfiguration struct {
 
 	ImageNamespace string
 
-	// Swarm whether to run inside of swarm. No
-	// local volumes will be used and suite images
+	// Parallel whether to run containers in parallel.
+	// No local volumes will be used and suite images
 	// will first be pushed before running.
-	Swarm bool
+	Parallel bool
 }
 
 // Runner represents a golem run session including
@@ -107,14 +116,16 @@ type runnerConfiguration struct {
 type Runner struct {
 	config runnerConfiguration
 	cache  CacheConfiguration
+	debug  bool
 }
 
 // newRunner creates a new runner from a runner
 // and cache configuration.
-func newRunner(config runnerConfiguration, cache CacheConfiguration) TestRunner {
+func newRunner(config runnerConfiguration, cache CacheConfiguration, debug bool) TestRunner {
 	return &Runner{
 		config: config,
 		cache:  cache,
+		debug:  debug,
 	}
 }
 
@@ -129,12 +140,15 @@ func (r *Runner) imageName(name string) string {
 // Build builds all suite instance image configured for
 // the runner. The result of build will be locally built
 // and tagged images ready to push or run directory.
-func (r *Runner) Build(client DockerClient) error {
+func (r *Runner) Build(cli DockerClient) error {
 	buildStart := time.Now()
 
 	for _, suite := range r.config.Suites {
 		for _, instance := range suite.Instances {
-			baseImage, err := BuildBaseImage(client, instance.BaseImage, r.cache)
+			imageName := r.imageName(instance.Name)
+			logrus.WithField("image", imageName).Info("building image")
+
+			baseImage, err := BuildBaseImage(cli, instance.BaseImage, r.cache)
 			if err != nil {
 				return fmt.Errorf("failure building base image: %v", err)
 			}
@@ -180,7 +194,7 @@ func (r *Runner) Build(client DockerClient) error {
 				return fmt.Errorf("error closing dockerfile: %s", err)
 			}
 
-			builder, err := client.NewBuilder(td, "", r.imageName(instance.Name))
+			builder, err := cli.NewBuilder(td, "", imageName)
 			if err != nil {
 				return fmt.Errorf("failed to create builder: %s", err)
 			}
@@ -198,11 +212,12 @@ func (r *Runner) Build(client DockerClient) error {
 // Run starts the test instance containers as well as any
 // containers which will manage the tests and waits for
 // the results.
-func (r *Runner) Run(client DockerClient) error {
+func (r *Runner) Run(cli DockerClient) error {
 	var (
 		failedTests int
 		runTests    int
 		runnerStart = time.Now()
+		ctx         = context.Background()
 	)
 
 	// TODO: Run in parallel (use libcompose?)
@@ -215,99 +230,113 @@ func (r *Runner) Run(client DockerClient) error {
 			// TODO: Use image ID and not image name
 			imageName := r.imageName(instance.Name)
 
-			logrus.Debugf("Running instance %s with %s as %s", instance.Name, imageName, contName)
+			logFields := logrus.Fields{
+				"instance":  instance.Name,
+				"image":     imageName,
+				"container": contName,
+			}
+			logrus.WithFields(logFields).Info("running instance")
 
-			hc := &dockerclient.HostConfig{
-				Privileged: true,
+			hc := &container.HostConfig{
+				Privileged:   true,
+				VolumeDriver: "local",
 			}
 
 			args := []string{}
 			if suite.DockerInDocker {
 				args = append(args, "-docker")
 			}
+			if r.debug {
+				args = append(args, "-debug")
+			}
 			// TODO: Add argument for instance name
 
-			config := &dockerclient.Config{
+			config := &container.Config{
 				Image:      imageName,
 				Cmd:        append([]string{r.config.ExecutableName}, args...),
 				WorkingDir: "/runner",
 				Volumes: map[string]struct{}{
 					"/var/log/docker": {},
 				},
-				VolumeDriver: "local",
 			}
 
 			if suite.DockerInDocker {
 				config.Env = append(config.Env, "DOCKER_GRAPHDRIVER="+getGraphDriver())
 
-				// TODO: In swarm mode, do not use a cached volume
+				// TODO: In parallel mode, do not use a cached volume
 				volumeName := contName + "-graph"
-				cont, err := client.InspectContainer(contName)
+				cont, err := cli.ContainerInspect(ctx, contName)
 				if err == nil {
-					removeOptions := dockerclient.RemoveContainerOptions{
-						ID:            cont.ID,
+					removeOptions := types.ContainerRemoveOptions{
 						RemoveVolumes: true,
 					}
-					if err := client.RemoveContainer(removeOptions); err != nil {
+					if err := cli.ContainerRemove(ctx, cont.ID, removeOptions); err != nil {
 						return fmt.Errorf("error removing existing container %s: %v", contName, err)
 					}
 				}
 
-				vol, err := client.InspectVolume(volumeName)
+				var createVolume bool
+				vol, err := cli.VolumeInspect(ctx, volumeName)
 				if err == nil {
 					if nocache {
-						if err := client.RemoveVolume(vol.Name); err != nil {
+						if err := cli.VolumeRemove(ctx, vol.Name); err != nil {
 							return fmt.Errorf("error removing volume %s: %v", vol.Name, err)
 						}
-						vol = nil
+						createVolume = true
 					}
+				} else if client.IsErrVolumeNotFound(err) {
+					createVolume = true
+				} else {
+					return fmt.Errorf("error inspecting volume: %v", err)
 				}
 
-				if vol == nil {
-					createOptions := dockerclient.CreateVolumeOptions{
+				if createVolume {
+					createOptions := types.VolumeCreateRequest{
 						Name:   volumeName,
 						Driver: "local",
 					}
-					vol, err = client.CreateVolume(createOptions)
+					vol, err = cli.VolumeCreate(ctx, createOptions)
 					if err != nil {
 						return fmt.Errorf("error creating volume: %v", err)
 					}
 				}
 
+				// TODO: Use volume name instead of mountpoint
 				logrus.Debugf("Mounting %s to %s", vol.Mountpoint, "/var/lib/docker")
 				hc.Binds = append(hc.Binds, fmt.Sprintf("%s:/var/lib/docker", vol.Mountpoint))
 			}
 
-			cc := dockerclient.CreateContainerOptions{
-				Name:       contName,
-				Config:     config,
-				HostConfig: hc,
-			}
+			nc := &network.NetworkingConfig{}
 
-			container, err := client.CreateContainer(cc)
+			container, err := cli.ContainerCreate(ctx, config, hc, nc, contName)
 			if err != nil {
 				return fmt.Errorf("error creating container: %s", err)
 			}
 
-			if err := client.StartContainer(container.ID, hc); err != nil {
+			for _, warning := range container.Warnings {
+				logrus.Warnf("Container %q create warning: %v", contName, warning)
+			}
+
+			if err := cli.ContainerStart(ctx, container.ID); err != nil {
 				return fmt.Errorf("error starting container: %s", err)
 			}
 
-			// TODO: Capture output
-			attachOptions := dockerclient.AttachToContainerOptions{
-				Container:    container.ID,
-				OutputStream: os.Stdout,
-				ErrorStream:  os.Stderr,
-				Logs:         true,
-				Stream:       true,
-				Stdout:       true,
-				Stderr:       true,
+			attachOptions := types.ContainerAttachOptions{
+				Stream: true,
+				Stdout: true,
+				Stderr: true,
 			}
-			if err := client.AttachToContainer(attachOptions); err != nil {
+			resp, err := cli.ContainerAttach(ctx, container.ID, attachOptions)
+			if err != nil {
 				return fmt.Errorf("Error attaching to container: %v", err)
 			}
 
-			inspectedContainer, err := client.InspectContainer(container.ID)
+			// TODO: Capture output for parallel mode
+			if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, resp.Reader); err != nil {
+				return fmt.Errorf("Error copying output stream: %v", err)
+			}
+
+			inspectedContainer, err := cli.ContainerInspect(ctx, container.ID)
 			if err != nil {
 				return fmt.Errorf("Error inspecting container: %v", err)
 			}
@@ -343,13 +372,19 @@ func getGraphDriver() string {
 	}
 }
 
-func ensureImage(client DockerClient, image string) (string, error) {
-	info, err := client.InspectImage(image)
+func registryAuthNotSupported() (string, error) {
+	return "", errors.New("Registry auth not supported, pull image and re-run golem")
+}
+
+func ensureImage(cli DockerClient, image string) (string, error) {
+	ctx := context.Background()
+	info, _, err := cli.ImageInspectWithRaw(ctx, image, false)
 	if err == nil {
 		logrus.Debugf("Image found locally %s", image)
 		return info.ID, nil
 	}
-	if err != dockerclient.ErrNoSuchImage {
+
+	if !client.IsErrImageNotFound(err) {
 		logrus.Errorf("Error inspecting image %q: %v", image, err)
 		return "", err
 	}
@@ -357,27 +392,41 @@ func ensureImage(client DockerClient, image string) (string, error) {
 	// Image must be tagged reference if it does not exist
 	ref, err := reference.Parse(image)
 	if err != nil {
-		logrus.Debugf("Image is not valid reference %q: %v", image, err)
+		logrus.Errorf("Image is not valid reference %q: %v", image, err)
+		return "", err
 	}
 	tagged, ok := ref.(reference.NamedTagged)
 	if !ok {
-		logrus.Debugf("Tagged reference required %q", image)
+		logrus.Errorf("Tagged reference required %q", image)
 		return "", errors.New("invalid reference, tag needed")
 	}
 
-	logrus.Infof("Pulling image %s", tagged.String())
-
-	pullOptions := dockerclient.PullImageOptions{
-		Repository:   tagged.Name(),
-		Tag:          tagged.Tag(),
-		OutputStream: os.Stdout,
+	pullStart := time.Now()
+	pullOptions := types.ImagePullOptions{
+		PrivilegeFunc: registryAuthNotSupported,
 	}
-	if err := client.PullImage(pullOptions, dockerclient.AuthConfiguration{}); err != nil {
+	resp, err := cli.ImagePull(ctx, tagged.String(), pullOptions)
+	if err != nil {
 		logrus.Errorf("Error pulling image %q: %v", tagged.String(), err)
 		return "", err
 	}
-	// TODO: Get pulled digest and inspect by digest
-	info, err = client.InspectImage(tagged.String())
+	defer resp.Close()
+
+	outFd, isTerminalOut := term.GetFdInfo(os.Stdout)
+
+	if err = jsonmessage.DisplayJSONMessagesStream(resp, os.Stdout, outFd, isTerminalOut, nil); err != nil {
+		logrus.Errorf("Error copying pull output: %v", err)
+		return "", err
+	}
+	// TODO: Get pulled digest
+
+	logFields := logrus.Fields{
+		timerKey: time.Since(pullStart),
+		"image":  tagged.String(),
+	}
+	logrus.WithFields(logFields).Info("image pulled")
+
+	info, _, err = cli.ImageInspectWithRaw(ctx, tagged.String(), false)
 	if err != nil {
 		return "", nil
 	}
@@ -385,7 +434,9 @@ func ensureImage(client DockerClient, image string) (string, error) {
 	return info.ID, nil
 }
 
-func saveImage(client DockerClient, filename, imgID string) error {
+func saveImage(cli DockerClient, filename, imgID string) error {
+	ctx := context.Background()
+
 	// TODO: must not exist
 	f, err := os.Create(filename)
 	if err != nil {
@@ -393,11 +444,18 @@ func saveImage(client DockerClient, filename, imgID string) error {
 	}
 	defer f.Close()
 	logrus.Debugf("Exporting image %s to %s", imgID, filename)
-	ec := dockerclient.ExportImageOptions{
-		Name:         imgID,
-		OutputStream: f,
+
+	r, err := cli.ImageSave(ctx, []string{imgID})
+	if err != nil {
+		return fmt.Errorf("error calling save image: %v", err)
 	}
-	return client.ExportImage(ec)
+	defer r.Close()
+
+	if _, err = io.Copy(f, r); err != nil {
+		return fmt.Errorf("error copying saved image response: %v", err)
+	}
+
+	return nil
 }
 
 func saveTagMap(filename string, tags []tag) error {
@@ -518,18 +576,19 @@ func nameToEnv(name string) string {
 
 // BuildBaseImage builds a base image using the given configuration
 // and returns an image id for the given image
-func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheConfiguration) (string, error) {
+func BuildBaseImage(cli DockerClient, conf BaseImageConfiguration, c CacheConfiguration) (string, error) {
+	ctx := context.Background()
 	tags := []tag{}
 	images := []string{}
 	envs := []string{}
 
-	baseImageID, err := ensureImage(client, conf.Base.String())
+	baseImageID, err := ensureImage(cli, conf.Base.String())
 	if err != nil {
 		return "", err
 	}
 
 	for _, ref := range conf.ExtraImages {
-		id, err := ensureImage(client, ref.String())
+		id, err := ensureImage(cli, ref.String())
 		if err != nil {
 			return "", err
 		}
@@ -540,7 +599,7 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 		images = append(images, id)
 	}
 	for _, ci := range conf.CustomImages {
-		id, err := ensureImage(client, ci.Source)
+		id, err := ensureImage(cli, ci.Source)
 		if err != nil {
 			return "", err
 		}
@@ -585,7 +644,7 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 	id, err := c.ImageCache.GetImage(imageHash)
 	if err == nil {
 		logrus.Debugf("Found image in cache for %s: %s", imageHash, id)
-		info, err := client.InspectImage(id)
+		info, _, err := cli.ImageInspectWithRaw(ctx, id, false)
 		if err == nil {
 			logrus.Debugf("Cached image found locally %s", info.ID)
 			return id, nil
@@ -594,6 +653,8 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 	} else {
 		logrus.Debugf("Building image, could not find in cache: %v", err)
 	}
+
+	buildStart := time.Now()
 
 	// Create temp build directory
 	td, err := ioutil.TempDir("", "golem-")
@@ -616,12 +677,19 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 		return "", fmt.Errorf("unable to make images directory: %v", err)
 	}
 
+	saveStart := time.Now()
+	logrus.Debugf("Saving %d images", len(images))
 	for _, img := range images {
-		if err := saveImage(client, filepath.Join(imagesDir, img+".tar"), img); err != nil {
+		if err := saveImage(cli, filepath.Join(imagesDir, img+".tar"), img); err != nil {
 			return "", fmt.Errorf("error saving image %s: %v", img, err)
 		}
 
 	}
+	logFields := logrus.Fields{
+		timerKey: time.Since(saveStart),
+		"images": len(images),
+	}
+	logrus.WithFields(logFields).Info("image save complete")
 
 	if err := saveTagMap(filepath.Join(imagesDir, "images.json"), tags); err != nil {
 		return "", fmt.Errorf("error saving tag map: %v", err)
@@ -634,7 +702,7 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 	}
 
 	// Call build
-	builder, err := client.NewBuilder(td, "", "")
+	builder, err := cli.NewBuilder(td, "", "")
 	if err != nil {
 		logrus.Errorf("Error creating builder: %v", err)
 		return "", err
@@ -644,6 +712,8 @@ func BuildBaseImage(client DockerClient, conf BaseImageConfiguration, c CacheCon
 		logrus.Errorf("Error building: %v", err)
 		return "", err
 	}
+
+	logrus.WithField(timerKey, time.Since(buildStart)).Info("base image build complete")
 
 	// Update index
 	imageID := builder.ImageID()
