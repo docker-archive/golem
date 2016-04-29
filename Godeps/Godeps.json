@@ -1,6 +1,6 @@
 {
 	"ImportPath": "github.com/docker/golem",
-	"GoVersion": "go1.5.1",
+	"GoVersion": "go1.6",
 	"GodepVersion": "v62",
 	"Packages": [
 		"./..."
@@ -16,6 +16,7 @@
 		},
 		{
 			"ImportPath": "github.com/BurntSushi/toml",
+			"Comment": "v0.1.0-21-g056c9bc",
 			"Rev": "056c9bc7be7190eaa7715723883caffa5f8fa3e4"
 		},
 		{
@@ -34,13 +35,13 @@
 		},
 		{
 			"ImportPath": "github.com/docker/distribution/digest",
-			"Comment": "v2.1.1-282-g9a7e897",
-			"Rev": "9a7e8975f11a21ffa6ded88ed1ab545f8f179b9b"
+			"Comment": "v2.3.0",
+			"Rev": "099622876197e3b24d627a72053d1bcc8968076a"
 		},
 		{
 			"ImportPath": "github.com/docker/distribution/reference",
-			"Comment": "v2.1.1-282-g9a7e897",
-			"Rev": "9a7e8975f11a21ffa6ded88ed1ab545f8f179b9b"
+			"Comment": "v2.3.0",
+			"Rev": "099622876197e3b24d627a72053d1bcc8968076a"
 		},
 		{
 			"ImportPath": "github.com/docker/docker/pkg/fileutils",

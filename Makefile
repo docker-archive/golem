@@ -19,7 +19,7 @@ builderimage:
 
 $(BASEDIR)/golem: builderimage $(GOFILES)
 	@echo "+ $@"
-	$(DOCKER) run -v $(PREFIX):/gopath/src/github.com/docker/golem $(NAMESPACE)/golem-builder sh -c "cd /gopath/src/github.com/docker/golem; godep go build -o $(BASEDIR)/golem ."
+	$(DOCKER) run -v $(PREFIX):/gopath/src/github.com/docker/golem $(NAMESPACE)/golem-builder sh -c "cd /gopath/src/github.com/docker/golem; GO15VENDOREXPERIMENT=1 go build -o $(BASEDIR)/golem ."
 
 baseimage: $(BASEDIR)/golem
 	@echo "+ $@"
