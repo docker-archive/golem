@@ -18,8 +18,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/Sirupsen/logrus"
-	"github.com/bugsnag/osext"
 	"github.com/docker/distribution/reference"
+	"github.com/docker/golem/clientutil"
 	"github.com/docker/golem/versionutil"
 )
 
@@ -108,110 +108,71 @@ type testSuite struct {
 	path string
 }
 
-type suites map[string]string
-
-func (s suites) String() string {
-	names := []string{}
-	for name := range s {
-		names = append(names, name)
-	}
-	return strings.Join(names, ",")
-}
-
-func (s suites) Set(value string) error {
-	absPath, err := filepath.Abs(value)
-	if err != nil {
-		return err
-	}
-	if info, err := os.Stat(absPath); err != nil {
-		return err
-	} else if !info.IsDir() {
-		return errors.New("expecting suite to be given as directory")
-	}
-
-	s[filepath.Base(filepath.Dir(absPath))] = absPath
-
-	return nil
-}
-
 // ConfigurationManager manages flags and resolving configuration
 // settings into a runner configuration.
 type ConfigurationManager struct {
-	flagResolver *flagResolver
-	suites       suites
+	FlagSet       *flag.FlagSet
+	flagResolver  *flagResolver
+	clientOptions *clientutil.ClientOptions
+	parallel      bool
+	manager       string
 }
 
 // NewConfigurationManager creates a new configuration manager
 // and registers associated flags.
-func NewConfigurationManager() *ConfigurationManager {
+func NewConfigurationManager(name string) *ConfigurationManager {
+	flagSet := flag.NewFlagSet(name, flag.ContinueOnError)
+
 	m := &ConfigurationManager{
-		flagResolver: newFlagResolver(),
+		FlagSet:       flagSet,
+		flagResolver:  newFlagResolver(flagSet),
+		clientOptions: clientutil.NewClientOptions(flagSet),
 	}
 
-	// TODO: support extra images
-	flag.Var(m.suites, "s", "Path to test suite to run")
+	// TODO: Support parallel mode
+	//flag.BoolVar(&m.parallel, "parallel", false, "Whether to run tests in parallel")
+	//flag.StringVar(&m.manager, "manager", "", "Image to use to manage test output")
 
 	return m
 }
 
-// CreateRunner creates a new test runner from a docker load version
-// and cache configuration.
-func (c *ConfigurationManager) CreateRunner(cache CacheConfiguration, debug bool) (TestRunner, error) {
-	runConfig, err := c.runnerConfiguration()
-	if err != nil {
-		return nil, err
+// ParseFlags parses the command line flags returning any error
+// encountered during parse.
+func (c *ConfigurationManager) ParseFlags(args []string) error {
+	if err := c.FlagSet.Parse(args); err != nil {
+		return err
 	}
-	return newRunner(runConfig, cache, debug), nil
+
+	// TODO: Check for any invalid arguments
+
+	return nil
 }
 
-// runnerConfiguration creates a runnerConfiguration resolving all the
+// RunnerConfiguration creates a RunnerConfiguration resolving all the
 // configurations from command line and provided configuration files.
-func (c *ConfigurationManager) runnerConfiguration() (runnerConfiguration, error) {
-	// TODO: eliminate suites and just use arguments
+func (c *ConfigurationManager) RunnerConfiguration() (RunnerConfiguration, error) {
 	var conf string
-	// Get first flag
-	if flag.NArg() == 0 {
+
+	suitePaths := c.FlagSet.Args()
+	if len(suitePaths) == 0 {
 		cwd, err := os.Getwd()
 		if err != nil {
-			return runnerConfiguration{}, err
+			return RunnerConfiguration{}, err
 		}
 		conf = filepath.Join(cwd, "golem.conf")
+		suitePaths = append(suitePaths, cwd)
 		logrus.Debugf("No configuration given, trying current directory %s", conf)
-	} else {
-		absPath, err := filepath.Abs(flag.Arg(0))
-		if err != nil {
-			return runnerConfiguration{}, err
-		}
-
-		info, err := os.Stat(absPath)
-		if err != nil {
-			return runnerConfiguration{}, err
-		}
-		if info.IsDir() {
-			absPath = filepath.Join(absPath, "golem.conf")
-			if _, err := os.Stat(absPath); err != nil {
-				return runnerConfiguration{}, err
-
-			}
-		}
-		conf = absPath
-
 	}
 
-	suites, err := parseSuites(flag.Args())
+	suites, err := parseSuites(suitePaths)
 	if err != nil {
-		return runnerConfiguration{}, err
+		return RunnerConfiguration{}, err
 	}
 
-	// TODO: Support non-linux by downloading and replacing executable path
-	executablePath, err := osext.Executable()
-	if err != nil {
-		return runnerConfiguration{}, fmt.Errorf("error getting path to executable: %s", err)
-	}
-
-	runnerConfig := runnerConfiguration{
+	runnerConfig := RunnerConfiguration{
 		ExecutableName: "golem_runner",
-		ExecutablePath: executablePath,
+		Parallel:       c.parallel,
+		ManagerImage:   c.manager,
 	}
 
 	for _, suite := range suites {
@@ -269,6 +230,12 @@ func (c *ConfigurationManager) runnerConfiguration() (runnerConfiguration, error
 	return runnerConfig, nil
 }
 
+// DockerClient returns a new DockerClient using the parsed configuration
+// to setup the client.
+func (c *ConfigurationManager) DockerClient() (DockerClient, error) {
+	return newDockerClient(c.clientOptions)
+}
+
 // resolver is an interface for getting test configurations
 // from a configuration setting.
 type resolver interface {
@@ -285,12 +252,12 @@ type flagResolver struct {
 	customImages customImageMap
 }
 
-func newFlagResolver() *flagResolver {
+func newFlagResolver(fs *flag.FlagSet) *flagResolver {
 	fr := &flagResolver{
 		customImages: customImageMap{},
 	}
 
-	flag.Var(fr.customImages, "i", "Set a custom image for running tests")
+	fs.Var(fr.customImages, "i", "Set a custom image for running tests")
 
 	return fr
 }

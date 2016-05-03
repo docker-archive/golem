@@ -91,45 +91,52 @@ type TestRunner interface {
 	Run(DockerClient) error
 }
 
-// runnerConfiguration is the configuration for
+// RunnerConfiguration is the configuration for
 // running a set of test suites. This configuration
 // determines which suites to run, how the base
 // images will be created, and how the test instances
 // should be run.
-type runnerConfiguration struct {
+type RunnerConfiguration struct {
 	Suites []SuiteConfiguration
 
+	// ExecutableName represents the name of the executable used inside
+	// the runner image.
 	ExecutableName string
-	ExecutablePath string
-
-	ImageNamespace string
 
 	// Parallel whether to run containers in parallel.
 	// No local volumes will be used and suite images
 	// will first be pushed before running.
 	Parallel bool
+
+	// ManagerImage defines the image which will aggregate
+	// the log streams and results
+	ManagerImage string
+
+	// ImageNamespace defines the base name of the test images
+	// which will be used to push/pull from the test image
+	ImageNamespace string
 }
 
-// Runner represents a golem run session including
+// runner represents a golem run session including
 // the run configuration information and cache
 // information to optimize creation and runtime.
-type Runner struct {
-	config runnerConfiguration
+type runner struct {
+	config RunnerConfiguration
 	cache  CacheConfiguration
 	debug  bool
 }
 
-// newRunner creates a new runner from a runner
+// NewRunner creates a new runner from a runner
 // and cache configuration.
-func newRunner(config runnerConfiguration, cache CacheConfiguration, debug bool) TestRunner {
-	return &Runner{
+func NewRunner(config RunnerConfiguration, cache CacheConfiguration, debug bool) TestRunner {
+	return &runner{
 		config: config,
 		cache:  cache,
 		debug:  debug,
 	}
 }
 
-func (r *Runner) imageName(name string) string {
+func (r *runner) imageName(name string) string {
 	imageName := "golem-" + name + ":latest"
 	if r.config.ImageNamespace != "" {
 		imageName = path.Join(r.config.ImageNamespace, imageName)
@@ -140,7 +147,7 @@ func (r *Runner) imageName(name string) string {
 // Build builds all suite instance image configured for
 // the runner. The result of build will be locally built
 // and tagged images ready to push or run directory.
-func (r *Runner) Build(cli DockerClient) error {
+func (r *runner) Build(cli DockerClient) error {
 	buildStart := time.Now()
 
 	for _, suite := range r.config.Suites {
@@ -212,7 +219,7 @@ func (r *Runner) Build(cli DockerClient) error {
 // Run starts the test instance containers as well as any
 // containers which will manage the tests and waits for
 // the results.
-func (r *Runner) Run(cli DockerClient) error {
+func (r *runner) Run(cli DockerClient) error {
 	var (
 		failedTests int
 		runTests    int
@@ -220,8 +227,8 @@ func (r *Runner) Run(cli DockerClient) error {
 		ctx         = context.Background()
 	)
 
-	// TODO: Run in parallel (use libcompose?)
-	// TODO: validate namespace when in swarm mode
+	// TODO: Run in parallel
+	// TODO: validate namespace when in parallel mode
 	for _, suite := range r.config.Suites {
 		for _, instance := range suite.Instances {
 			// TODO: Add configuration for nocache

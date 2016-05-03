@@ -10,7 +10,6 @@ import (
 	"golang.org/x/net/context"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/docker/golem/clientutil"
 	"github.com/docker/golem/runner"
 	"github.com/docker/golem/versionutil"
 )
@@ -27,17 +26,23 @@ func main() {
 		debug       bool
 	)
 
-	co := clientutil.NewClientOptions()
-	cm := runner.NewConfigurationManager()
+	cm := runner.NewConfigurationManager(name)
 
-	flag.StringVar(&cacheDir, "cache", "", "Cache directory")
-	flag.BoolVar(&startDaemon, "rundaemon", false, "Start daemon")
-	flag.BoolVar(&debug, "debug", false, "Whether to output debug logs")
+	cm.FlagSet.StringVar(&cacheDir, "cache", "", "Cache directory")
+	cm.FlagSet.BoolVar(&startDaemon, "rundaemon", false, "Start daemon")
+	cm.FlagSet.BoolVar(&debug, "debug", false, "Whether to output debug logs")
 
-	flag.Parse()
+	if err := cm.ParseFlags(os.Args[1:]); err != nil {
+		logrus.Fatalf("Invalid options: %v", err)
+	}
 
 	if debug {
 		logrus.SetLevel(logrus.DebugLevel)
+	}
+
+	runConfig, err := cm.RunnerConfiguration()
+	if err != nil {
+		logrus.Fatalf("Error creating run configuration: %v", err)
 	}
 
 	if cacheDir == "" {
@@ -49,7 +54,7 @@ func main() {
 		defer os.RemoveAll(td)
 	}
 
-	c := runner.CacheConfiguration{
+	cacheConfig := runner.CacheConfiguration{
 		ImageCache: runner.NewImageCache(filepath.Join(cacheDir, "images")),
 	}
 
@@ -63,7 +68,7 @@ func main() {
 		defer shutdown()
 		client = c
 	} else {
-		c, err := runner.NewDockerClient(co)
+		c, err := cm.DockerClient()
 		if err != nil {
 			logrus.Fatalf("Failed to create client: %v", err)
 		}
@@ -76,10 +81,7 @@ func main() {
 		logrus.Fatal(err)
 	}
 
-	r, err := cm.CreateRunner(c, debug)
-	if err != nil {
-		logrus.Fatalf("Error creating runner: %v", err)
-	}
+	r := runner.NewRunner(runConfig, cacheConfig, debug)
 
 	if err := r.Build(client); err != nil {
 		logrus.Fatalf("Error building test images: %v", err)

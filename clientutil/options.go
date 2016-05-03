@@ -26,6 +26,7 @@ type ClientOptions struct {
 	parseL    sync.Mutex
 	parsed    bool
 	tlsConfig *tls.Config
+	flagset   *flag.FlagSet
 
 	// flags
 	daemonURL      string
@@ -38,14 +39,16 @@ type ClientOptions struct {
 
 // NewClientOptions creates a new ClientOptions struct
 // and registers cli flags to that struct.
-func NewClientOptions() *ClientOptions {
-	co := &ClientOptions{}
-	flag.StringVar(&co.daemonURL, "H", "", "Docker daemon socket/host to connect to")
-	flag.BoolVar(&co.useTLS, "-tls", false, "Use TLS client cert/key (implied by --tlsverify)")
-	flag.BoolVar(&co.verifyTLS, "-tlsverify", false, "Use TLS and verify the remote server certificate")
-	flag.StringVar(&co.caCertFile, "-cacert", "", "Trust certs signed only by this CA")
-	flag.StringVar(&co.clientCertFile, "-cert", "", "TLS client certificate")
-	flag.StringVar(&co.clientKeyFile, "-key", "", "TLS client key")
+func NewClientOptions(fs *flag.FlagSet) *ClientOptions {
+	co := &ClientOptions{
+		flagset: fs,
+	}
+	fs.StringVar(&co.daemonURL, "H", "", "Docker daemon socket/host to connect to")
+	fs.BoolVar(&co.useTLS, "-tls", false, "Use TLS client cert/key (implied by --tlsverify)")
+	fs.BoolVar(&co.verifyTLS, "-tlsverify", false, "Use TLS and verify the remote server certificate")
+	fs.StringVar(&co.caCertFile, "-cacert", "", "Trust certs signed only by this CA")
+	fs.StringVar(&co.clientCertFile, "-cert", "", "TLS client certificate")
+	fs.StringVar(&co.clientKeyFile, "-key", "", "TLS client key")
 
 	return co
 }
@@ -56,7 +59,7 @@ func (co *ClientOptions) parse() {
 	if co.parsed {
 		return
 	}
-	if !flag.Parsed() {
+	if !co.flagset.Parsed() {
 		panic("flags must be parsed before accessing data")
 	}
 

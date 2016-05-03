@@ -30,10 +30,6 @@
 			"Rev": "55eb11d21d2a31a3cc93838241d04800f52e823d"
 		},
 		{
-			"ImportPath": "github.com/bugsnag/osext",
-			"Rev": "0dd3f918b21bec95ace9dc86c7e70266cfc5c702"
-		},
-		{
 			"ImportPath": "github.com/docker/distribution/digest",
 			"Comment": "v2.3.0",
 			"Rev": "099622876197e3b24d627a72053d1bcc8968076a"
