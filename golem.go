@@ -92,13 +92,15 @@ func main() {
 
 func runnerMain() {
 	var (
-		command string
-		dind    bool
-		clean   bool
-		debug   bool
+		command        string
+		forwardAddress string
+		dind           bool
+		clean          bool
+		debug          bool
 	)
 
 	flag.StringVar(&command, "command", "bats", "Command to run")
+	flag.StringVar(&forwardAddress, "forward", "", "Address to forward logs to")
 	flag.BoolVar(&dind, "docker", false, "Whether to run docker")
 	flag.BoolVar(&clean, "clean", false, "Whether to ensure /var/lib/docker is empty")
 	flag.BoolVar(&debug, "debug", false, "Whether to output debug logs")
@@ -109,27 +111,58 @@ func runnerMain() {
 		logrus.SetLevel(logrus.DebugLevel)
 	}
 
+	router := runner.NewLogRouter("/var/log/docker")
+
+	if forwardAddress != "" {
+		logrus.Debugf("Forwarding logs to %s, not yet supported", forwardAddress)
+		// TODO: Create forwarder with address
+		// add forwarder using router.AddForwarder
+	}
+
 	logrus.Debugf("Runner!")
+
+	logrus.Debugf("Environment: %#v", os.Environ())
 
 	// Check if has compose file
 	composeFile := "/runner/docker-compose.yml"
 	var composeCapturer runner.LogCapturer
 	if _, err := os.Stat(composeFile); err == nil {
-		composeCapturer = newFileCapturer("compose")
+		composeCapturer, err = router.RouteLogCapturer("compose")
+		if err != nil {
+			logrus.Fatalf("Error creating log capturer: %v", err)
+		}
 		defer composeCapturer.Close()
 	} else {
 		logrus.Debugf("No compose file found at %s", composeFile)
 	}
-	logrus.Debugf("Environment: %#v", os.Environ())
 
-	scriptCapturer := newFileCapturer("scripts")
+	scriptCapturer, err := router.RouteLogCapturer("scripts")
+	if err != nil {
+		logrus.Fatalf("Error creating log capturer: %v", err)
+	}
 	defer scriptCapturer.Close()
-	loadCapturer := newFileCapturer("load")
+	loadCapturer, err := router.RouteLogCapturer("load")
+	if err != nil {
+		logrus.Fatalf("Error creating log capturer: %v", err)
+	}
 	defer loadCapturer.Close()
-	daemonCapturer := newFileCapturer("daemon")
+	daemonCapturer, err := router.RouteLogCapturer("daemon")
+	if err != nil {
+		logrus.Fatalf("Error creating log capturer: %v", err)
+	}
 	defer daemonCapturer.Close()
-	testCapturer := runner.NewConsoleLogCapturer()
+	testCapturer, err := router.RouteLogCapturer("test")
+	if err != nil {
+		logrus.Fatalf("Error creating log capturer: %v", err)
+	}
 	defer testCapturer.Close()
+
+	if forwardAddress == "" {
+		logrus.Debugf("Logs not forwarded, dumping test output to console")
+		if err := router.AddCapturer("test", runner.NewConsoleLogCapturer()); err != nil {
+			logrus.Fatalf("Error creating test capturer")
+		}
+	}
 
 	instanceF, err := os.Open("/instance.json")
 	if err != nil {
@@ -174,14 +207,7 @@ func runnerMain() {
 	if runErr != nil {
 		logrus.Fatalf("Test errored: %v", runErr)
 	}
-}
 
-func newFileCapturer(name string) runner.LogCapturer {
-	basename := filepath.Join("/var/log/docker", name)
-	lc, err := runner.NewFileLogCapturer(basename)
-	if err != nil {
-		logrus.Fatalf("Error creating file capturer for %s: %v", basename, err)
-	}
-
-	return lc
+	logrus.Debugf("Shutting down log router")
+	router.Shutdown()
 }
