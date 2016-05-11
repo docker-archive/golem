@@ -20,8 +20,8 @@ type DockerClient struct {
 	options *clientutil.ClientOptions
 }
 
-// NewDockerClient creates a new docker client from client options
-func NewDockerClient(co *clientutil.ClientOptions) (DockerClient, error) {
+// newDockerClient creates a new docker client from client options
+func newDockerClient(co *clientutil.ClientOptions) (DockerClient, error) {
 	var httpClient *http.Client
 	tlsConfig := co.TLSConfig()
 	host := co.DaemonURL()
