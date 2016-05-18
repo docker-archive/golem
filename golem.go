@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"flag"
 	"io/ioutil"
+	"log"
+	"net"
 	"os"
 	"path/filepath"
 
@@ -18,6 +20,10 @@ func main() {
 	name := filepath.Base(os.Args[0])
 	if name == "golem_runner" {
 		runnerMain()
+		return
+	}
+	if name == "golem_tapper" {
+		tapperMain()
 		return
 	}
 	var (
@@ -96,6 +102,7 @@ func runnerMain() {
 	var (
 		command        string
 		forwardAddress string
+		tapSocket      string
 		dind           bool
 		clean          bool
 		debug          bool
@@ -103,6 +110,7 @@ func runnerMain() {
 
 	flag.StringVar(&command, "command", "bats", "Command to run")
 	flag.StringVar(&forwardAddress, "forward", "", "Address to forward logs to")
+	flag.StringVar(&tapSocket, "tap-socket", "/var/run/golem-logs", "Socket to spawn log tapper")
 	flag.BoolVar(&dind, "docker", false, "Whether to run docker")
 	flag.BoolVar(&clean, "clean", false, "Whether to ensure /var/lib/docker is empty")
 	flag.BoolVar(&debug, "debug", false, "Whether to output debug logs")
@@ -114,6 +122,15 @@ func runnerMain() {
 	}
 
 	router := runner.NewLogRouter("/var/log/docker")
+
+	if tapSocket != "" {
+		l, err := net.Listen("unix", tapSocket)
+		if err != nil {
+			logrus.Fatalf("Error creating listener for %s: %#v", tapSocket, err)
+		}
+
+		go runner.TapServer(l, router)
+	}
 
 	if forwardAddress != "" {
 		logrus.Debugf("Forwarding logs to %s, not yet supported", forwardAddress)
@@ -212,4 +229,27 @@ func runnerMain() {
 
 	logrus.Debugf("Shutting down log router")
 	router.Shutdown()
+}
+
+func tapperMain() {
+	var tapSocket string
+	var stderr bool
+
+	flag.StringVar(&tapSocket, "tap-socket", "/var/run/golem-logs", "Socket to connect to for log tapping")
+	flag.BoolVar(&stderr, "stderr", false, "Whether to send stderr instead of stdout")
+
+	flag.Parse()
+
+	if flag.NArg() != 1 {
+		log.Fatal("Expecting 1 argument")
+	}
+
+	client, err := net.Dial("unix", tapSocket)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := runner.TapClient(client, flag.Arg(0), stderr); err != nil {
+		log.Fatal(err)
+	}
 }

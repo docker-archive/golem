@@ -30,6 +30,11 @@
 			"Rev": "55eb11d21d2a31a3cc93838241d04800f52e823d"
 		},
 		{
+			"ImportPath": "github.com/dmcgowan/msgpack",
+			"Comment": "v2.1.3-6-gb2a4151",
+			"Rev": "b2a415181d61dad392b5e98e65b0cf7d73e606e7"
+		},
+		{
 			"ImportPath": "github.com/docker/distribution/digest",
 			"Comment": "v2.3.0",
 			"Rev": "099622876197e3b24d627a72053d1bcc8968076a"
@@ -173,6 +178,24 @@
 			"ImportPath": "github.com/docker/go-units",
 			"Comment": "v0.3.0",
 			"Rev": "5d2041e26a699eaca682e2ea41c8f891e1060444"
+		},
+		{
+			"ImportPath": "github.com/docker/libchan",
+			"Comment": "v0.1.0-26-g0328dce",
+			"Rev": "0328dcec840a0659448faf08af087135fffb7fde"
+		},
+		{
+			"ImportPath": "github.com/docker/libchan/spdy",
+			"Comment": "v0.1.0-26-g0328dce",
+			"Rev": "0328dcec840a0659448faf08af087135fffb7fde"
+		},
+		{
+			"ImportPath": "github.com/docker/spdystream",
+			"Rev": "c33989bcb56748d2473194d11f8ac3fc563688eb"
+		},
+		{
+			"ImportPath": "github.com/docker/spdystream/spdy",
+			"Rev": "c33989bcb56748d2473194d11f8ac3fc563688eb"
 		},
 		{
 			"ImportPath": "github.com/jlhawn/dockramp/archive",
