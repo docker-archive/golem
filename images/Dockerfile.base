@@ -29,6 +29,7 @@ RUN pip install docker-compose==1.6
 
 # Install golem binary
 COPY golem /usr/local/bin/golem_runner
+RUN ln /usr/local/bin/golem_runner /usr/local/bin/golem_tapper
 
 VOLUME /var/lib/docker
 
