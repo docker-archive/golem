@@ -11,6 +11,7 @@ import (
 	"github.com/docker/engine-api/client"
 	"github.com/docker/golem/clientutil"
 	"github.com/docker/golem/versionutil"
+	"github.com/docker/libcompose/project"
 	"github.com/jlhawn/dockramp/build"
 )
 
@@ -74,4 +75,19 @@ func (dc DockerClient) CheckServerVersion(version versionutil.Version) error {
 	logrus.Debugf("Client connected to server with version %s", serverVersion)
 
 	return nil
+}
+
+// clientFactory is a factory for creating clients for libcompose
+type clientFactory struct {
+	client DockerClient
+}
+
+func newClientFactory(client DockerClient) project.ClientFactory {
+	return clientFactory{
+		client: client,
+	}
+}
+
+func (c clientFactory) Create(service project.Service) client.APIClient {
+	return c.client
 }
