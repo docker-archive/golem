@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/Sirupsen/logrus"
+	"github.com/docker/libcompose/logger"
 )
 
 // LogCapturer is an interface for providing
@@ -78,4 +79,22 @@ func (fl *fileLogger) Close() error {
 		logrus.Errorf("Error closing stderr: %v", err)
 	}
 	return nil
+}
+
+// stdLogFactory creates loggers for libcompose which just dumps
+// output to stdout and stderr without including the service name.
+type stdLogFactory struct{}
+
+type stdLogger struct{}
+
+func (stdLogger) Out(bytes []byte) {
+	os.Stdout.Write(bytes)
+}
+
+func (stdLogger) Err(bytes []byte) {
+	os.Stderr.Write(bytes)
+}
+
+func (stdLogFactory) Create(string) logger.Logger {
+	return stdLogger{}
 }

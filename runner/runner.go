@@ -20,12 +20,13 @@ import (
 	"github.com/docker/distribution/digest"
 	"github.com/docker/distribution/reference"
 	"github.com/docker/docker/pkg/jsonmessage"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/docker/pkg/term"
 	"github.com/docker/engine-api/client"
 	"github.com/docker/engine-api/types"
-	"github.com/docker/engine-api/types/container"
-	"github.com/docker/engine-api/types/network"
+	"github.com/docker/libcompose/config"
+	"github.com/docker/libcompose/docker"
+	"github.com/docker/libcompose/project"
+	"github.com/docker/libcompose/project/options"
 	"github.com/termie/go-shutil"
 )
 
@@ -124,6 +125,9 @@ type runner struct {
 	config RunnerConfiguration
 	cache  CacheConfiguration
 	debug  bool
+
+	composeProject *project.Project
+	tests          []string
 }
 
 // NewRunner creates a new runner from a runner
@@ -144,11 +148,35 @@ func (r *runner) imageName(name string) string {
 	return imageName
 }
 
+func (r *runner) getComposeProject(cli DockerClient) (*project.Project, error) {
+	apiProject, err := docker.NewProject(&docker.Context{
+		Context: project.Context{
+			ProjectName:   "golem",
+			LoggerFactory: stdLogFactory{},
+		},
+		ClientFactory: newClientFactory(cli),
+	})
+	if err != nil {
+		return nil, err
+	}
+	p, ok := apiProject.(*project.Project)
+	if !ok {
+		return nil, errors.New("unable to setup compose project")
+	}
+
+	return p, nil
+}
+
 // Build builds all suite instance image configured for
 // the runner. The result of build will be locally built
 // and tagged images ready to push or run directory.
 func (r *runner) Build(cli DockerClient) error {
 	buildStart := time.Now()
+
+	p, err := r.getComposeProject(cli)
+	if err != nil {
+		return err
+	}
 
 	for _, suite := range r.config.Suites {
 		for _, instance := range suite.Instances {
@@ -209,45 +237,8 @@ func (r *runner) Build(cli DockerClient) error {
 			if err := builder.Run(); err != nil {
 				return fmt.Errorf("build error: %s", err)
 			}
-		}
-	}
 
-	logrus.WithField(timerKey, time.Since(buildStart)).Info("test image build complete")
-	return nil
-}
-
-// Run starts the test instance containers as well as any
-// containers which will manage the tests and waits for
-// the results.
-func (r *runner) Run(cli DockerClient) error {
-	var (
-		failedTests int
-		runTests    int
-		runnerStart = time.Now()
-		ctx         = context.Background()
-	)
-
-	// TODO: Run in parallel
-	// TODO: validate namespace when in parallel mode
-	for _, suite := range r.config.Suites {
-		for _, instance := range suite.Instances {
-			// TODO: Add configuration for nocache
-			nocache := false
 			contName := "golem-" + instance.Name
-			// TODO: Use image ID and not image name
-			imageName := r.imageName(instance.Name)
-
-			logFields := logrus.Fields{
-				"instance":  instance.Name,
-				"image":     imageName,
-				"container": contName,
-			}
-			logrus.WithFields(logFields).Info("running instance")
-
-			hc := &container.HostConfig{
-				Privileged:   true,
-				VolumeDriver: "local",
-			}
 
 			args := []string{}
 			if suite.DockerInDocker {
@@ -258,112 +249,133 @@ func (r *runner) Run(cli DockerClient) error {
 			}
 			// TODO: Add argument for instance name
 
-			config := &container.Config{
-				Image:      imageName,
-				Cmd:        append([]string{r.config.ExecutableName}, args...),
+			service := &config.ServiceConfig{
+				Command:    append([]string{r.config.ExecutableName}, args...),
+				Hostname:   contName,
+				Image:      builder.ImageID(),
+				Privileged: true,
+				StdinOpen:  true,
+				Tty:        true,
+				Volumes:    []string{"/var/log/docker"},
 				WorkingDir: "/runner",
-				Volumes: map[string]struct{}{
-					"/var/log/docker": {},
-				},
 			}
 
 			if suite.DockerInDocker {
-				config.Env = append(config.Env, "DOCKER_GRAPHDRIVER="+getGraphDriver())
+				service.Environment = []string{"DOCKER_GRAPHDRIVER=" + getGraphDriver()}
 
-				// TODO: In parallel mode, do not use a cached volume
 				volumeName := contName + "-graph"
-				cont, err := cli.ContainerInspect(ctx, contName)
-				if err == nil {
-					removeOptions := types.ContainerRemoveOptions{
-						RemoveVolumes: true,
-					}
-					if err := cli.ContainerRemove(ctx, cont.ID, removeOptions); err != nil {
-						return fmt.Errorf("error removing existing container %s: %v", contName, err)
-					}
+				volumeConfig := &config.VolumeConfig{
+					Driver: "local",
 				}
 
-				var createVolume bool
-				vol, err := cli.VolumeInspect(ctx, volumeName)
-				if err == nil {
-					if nocache {
-						if err := cli.VolumeRemove(ctx, vol.Name); err != nil {
-							return fmt.Errorf("error removing volume %s: %v", vol.Name, err)
-						}
-						createVolume = true
-					}
-				} else if client.IsErrVolumeNotFound(err) {
-					createVolume = true
-				} else {
-					return fmt.Errorf("error inspecting volume: %v", err)
+				if err := p.AddVolumeConfig(volumeName, volumeConfig); err != nil {
+					return err
 				}
 
-				if createVolume {
-					createOptions := types.VolumeCreateRequest{
-						Name:   volumeName,
-						Driver: "local",
-					}
-					vol, err = cli.VolumeCreate(ctx, createOptions)
-					if err != nil {
-						return fmt.Errorf("error creating volume: %v", err)
-					}
+				service.Volumes = append(service.Volumes, volumeName+":/var/lib/docker")
+			}
+
+			logFields := logrus.Fields{
+				"name":      instance.Name,
+				"image":     builder.ImageID(),
+				"container": contName,
+			}
+			logrus.WithFields(logFields).Info("added test")
+
+			if err := p.AddConfig(instance.Name, service); err != nil {
+				return err
+			}
+			r.tests = append(r.tests, instance.Name)
+		}
+	}
+
+	logrus.WithField(timerKey, time.Since(buildStart)).Info("test image build complete")
+
+	r.composeProject = p
+	return nil
+}
+
+func getContainerID(info project.InfoSet, name string) string {
+	for _, infos := range info {
+		for _, inf := range infos {
+			if inf.Key == "Name" {
+				parts := strings.Split(inf.Value, "_")
+				if len(parts) == 3 && parts[1] == name {
+					return inf.Value
 				}
-
-				// TODO: Use volume name instead of mountpoint
-				logrus.Debugf("Mounting %s to %s", vol.Mountpoint, "/var/lib/docker")
-				hc.Binds = append(hc.Binds, fmt.Sprintf("%s:/var/lib/docker", vol.Mountpoint))
-			}
-
-			nc := &network.NetworkingConfig{}
-
-			container, err := cli.ContainerCreate(ctx, config, hc, nc, contName)
-			if err != nil {
-				return fmt.Errorf("error creating container: %s", err)
-			}
-
-			for _, warning := range container.Warnings {
-				logrus.Warnf("Container %q create warning: %v", contName, warning)
-			}
-
-			if err := cli.ContainerStart(ctx, container.ID); err != nil {
-				return fmt.Errorf("error starting container: %s", err)
-			}
-
-			attachOptions := types.ContainerAttachOptions{
-				Stream: true,
-				Stdout: true,
-				Stderr: true,
-			}
-			resp, err := cli.ContainerAttach(ctx, container.ID, attachOptions)
-			if err != nil {
-				return fmt.Errorf("Error attaching to container: %v", err)
-			}
-
-			// TODO: Capture output for parallel mode
-			if _, err := stdcopy.StdCopy(os.Stdout, os.Stderr, resp.Reader); err != nil {
-				return fmt.Errorf("Error copying output stream: %v", err)
-			}
-
-			inspectedContainer, err := cli.ContainerInspect(ctx, container.ID)
-			if err != nil {
-				return fmt.Errorf("Error inspecting container: %v", err)
-			}
-			runTests = runTests + 1
-			if inspectedContainer.State.ExitCode > 0 {
-				logrus.Errorf("Test failed with exit code %d", inspectedContainer.State.ExitCode)
-				failedTests = failedTests + 1
+				logrus.Infof("Not matched %v: %v", name, inf.Value)
 			}
 		}
+	}
+	return ""
+
+}
+
+// Run starts the test instance containers as well as any
+// containers which will manage the tests and waits for
+// the results.
+func (r *runner) Run(cli DockerClient) error {
+
+	if r.composeProject == nil {
+		return errors.New("success build required before run")
+	}
+
+	var (
+		ctx         = context.Background()
+		runnerStart = time.Now()
+		failedTests = 0
+	)
+
+	createOptions := options.Create{
+		ForceRecreate: true,
+	}
+	if err := r.composeProject.Create(createOptions); err != nil {
+		return err
+	}
+
+	// TODO: Add parallel execution, Starts all and waits for each test
+
+	for _, t := range r.tests {
+		startT := time.Now()
+		if err := r.composeProject.Start(t); err != nil {
+			return err
+		}
+		if err := r.composeProject.Log(true, t); err != nil {
+			return err
+		}
+		info, err := r.composeProject.Ps(false, t)
+		if err != nil {
+			return err
+		}
+		contId := getContainerID(info, t)
+		if contId == "" {
+			return fmt.Errorf("unable to get container id")
+		}
+
+		inspectedContainer, err := cli.ContainerInspect(ctx, contId)
+		if err != nil {
+			return fmt.Errorf("error inspecting container: %v", err)
+		}
+		if inspectedContainer.State.ExitCode > 0 {
+			failedTests = failedTests + 1
+		}
+
+		logrus.WithFields(logrus.Fields{
+			"elapsed": time.Since(startT),
+			"name":    t,
+			"exit":    inspectedContainer.State.ExitCode,
+		}).Info("test complete")
 	}
 
 	logFields := logrus.Fields{
 		timerKey: time.Since(runnerStart),
-		"ran":    runTests,
+		"ran":    len(r.tests),
 		"failed": failedTests,
 	}
 	logrus.WithFields(logFields).Info("test runner complete")
 
 	if failedTests > 0 {
-		return fmt.Errorf("test failure: %d of %d tests failed", failedTests, runTests)
+		return fmt.Errorf("test failure: %d of %d tests failed", failedTests, len(r.tests))
 	}
 
 	return nil
